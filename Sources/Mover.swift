@@ -9,6 +9,7 @@ private typealias CGSConnectionID = Int32
 @_silgen_name("CGSGetProcessMenuBarWindowList") private func CGSGetProcessMenuBarWindowList(
     _ cid: CGSConnectionID, _ target: CGSConnectionID, _ count: Int32,
     _ list: UnsafeMutablePointer<CGWindowID>, _ outCount: inout Int32) -> CGError
+@_silgen_name("CGSSetConnectionProperty") private func CGSSetConnectionProperty(_ cid: CGSConnectionID, _ target: CGSConnectionID, _ key: CFString, _ value: CFTypeRef) -> CGError
 @_silgen_name("CGSGetScreenRectForWindow") private func CGSGetScreenRectForWindow(_ cid: CGSConnectionID, _ wid: CGWindowID, _ rect: inout CGRect) -> CGError
 
 /// Moves menu bar items with mouse events aimed at the items' windows, as Ice does: a Command
@@ -96,8 +97,16 @@ enum Mover {
         source.setLocalEventsFilterDuringSuppressionState(allow, state: .eventSuppressionStateSuppressionInterval)
         source.localEventsSuppressionInterval = 0
 
+        // The events move the real cursor; macOS ignores them otherwise (events sent straight to
+        // Control Center do nothing). So hide the cursor, ignore the user's mouse while the drag
+        // is under way, and put the cursor back where it was.
         let cursor = CGEvent(source: nil)?.location
-        defer { if let cursor { CGWarpMouseCursorPosition(cursor) } }
+        hideCursor()
+        defer {
+            if let cursor { CGWarpMouseCursorPosition(cursor) }
+            CGAssociateMouseAndMouseCursorPosition(1)
+            CGDisplayShowCursor(CGMainDisplayID())
+        }
 
         guard let down = event(.leftMouseDown, at: grab, window: window, command: true),
               let up = event(.leftMouseUp, at: drop, window: anchor, command: false)
@@ -112,6 +121,18 @@ enum Mover {
             if let now = frame(of: window), now != start { usleep(40_000); return true }
         }
         return false
+    }
+
+    /// Hides the cursor on every display and detaches it from the mouse. A background app may
+    /// only hide the cursor once its connection has the "SetsCursorInBackground" property.
+    private static let allowCursorInBackground: Void = {
+        let cid = CGSMainConnectionID()
+        _ = CGSSetConnectionProperty(cid, cid, "SetsCursorInBackground" as CFString, kCFBooleanTrue)
+    }()
+    private static func hideCursor() {
+        _ = allowCursorInBackground
+        CGDisplayHideCursor(CGMainDisplayID())
+        CGAssociateMouseAndMouseCursorPosition(0)
     }
 
     private static func event(_ type: CGEventType, at p: CGPoint, window: CGWindowID, command: Bool) -> CGEvent? {
