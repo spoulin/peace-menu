@@ -104,6 +104,18 @@ struct GroupDetail: View {
                         Image(systemName: group.wrappedValue.symbol)
                     }
                 }
+                HStack {
+                    Toggle("Color", isOn: Binding(
+                        get: { group.wrappedValue.color != nil },
+                        set: { group.wrappedValue.color = $0 ? (group.wrappedValue.color ?? "#FF9F0A") : nil }))
+                    Spacer()
+                    if group.wrappedValue.color != nil {
+                        ColorPicker("", selection: Binding(
+                            get: { Color(nsColor: group.wrappedValue.color.flatMap(NSColor.init(hex:)) ?? .systemOrange) },
+                            set: { group.wrappedValue.color = NSColor($0).hex }), supportsOpacity: false)
+                            .labelsHidden()
+                    }
+                }
                 Toggle("Icons folded", isOn: Binding(
                     get: { group.wrappedValue.collapsed },
                     set: { controller.setCollapsed(groupID, $0) }))

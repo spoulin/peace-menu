@@ -34,6 +34,8 @@ struct MenuGroup: Codable, Identifiable, Hashable {
     /// Only the separator is in the bar; the icons wait behind ‹. A click on the separator
     /// shows or folds them.
     var collapsed = false
+    /// The color of the group's title in the menu bar, as "#RRGGBB"; nil follows the menu bar.
+    var color: String? = nil
 }
 
 extension MenuGroup {
@@ -45,6 +47,7 @@ extension MenuGroup {
         style = try c.decodeIfPresent(SeparatorStyle.self, forKey: .style) ?? .line
         items = try c.decodeIfPresent([ItemRef].self, forKey: .items) ?? []
         collapsed = try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
+        color = try c.decodeIfPresent(String.self, forKey: .color)
     }
 }
 

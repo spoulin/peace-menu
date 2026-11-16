@@ -338,10 +338,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let changed = g.collapsed && changedGroups.contains(g.id)
         if changed { b.toolTip = "\(g.name) — an icon changed. Click: show the icons" }
         let chevron = chevronImage(down: g.collapsed)
+        // A group color paints the name, the chevron and the line, dot or symbol.
+        let tint = g.color.flatMap(NSColor.init(hex:))
+        defer { if let tint, let img = b.image { b.image = img.tinted(tint) } }
         func titled(_ text: String, image: NSImage?) {
             item.length = NSStatusItem.variableLength
             let title = NSMutableAttributedString(string: text, attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: tint ?? NSColor.secondaryLabelColor])
             if changed {
                 title.append(NSAttributedString(string: (text.isEmpty ? "" : " ") + "●", attributes: [
                     .font: NSFont.systemFont(ofSize: 8), .foregroundColor: NSColor.systemOrange, .baselineOffset: 1]))
@@ -901,5 +904,35 @@ final class LiveItemsModel: ObservableObject {
             let found = Scanner.scan().filter { !$0.isFixed && !Scanner.isUnhideable($0.key) }.sorted { $0.frame.minX > $1.frame.minX }
             DispatchQueue.main.async { self.items = found }
         }
+    }
+}
+
+extension NSColor {
+    /// "#RRGGBB" or "RRGGBB".
+    convenience init?(hex: String) {
+        let h = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+        self.init(srgbRed: CGFloat((v >> 16) & 0xff) / 255, green: CGFloat((v >> 8) & 0xff) / 255,
+                  blue: CGFloat(v & 0xff) / 255, alpha: 1)
+    }
+
+    var hex: String? {
+        guard let c = usingColorSpace(.sRGB) else { return nil }
+        let r = Int((c.redComponent * 255).rounded()), g = Int((c.greenComponent * 255).rounded()), b = Int((c.blueComponent * 255).rounded())
+        return String(format: "#%02X%02X%02X", r, g, b)
+    }
+}
+
+extension NSImage {
+    /// The image's shape filled with `color` (no longer a template, so the menu bar keeps the color).
+    func tinted(_ color: NSColor) -> NSImage {
+        let img = NSImage(size: size, flipped: false) { r in
+            self.draw(in: r)
+            color.set()
+            r.fill(using: .sourceAtop)
+            return true
+        }
+        img.isTemplate = false
+        return img
     }
 }
