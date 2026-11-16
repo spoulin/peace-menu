@@ -126,6 +126,108 @@ enum Mover {
         return false
     }
 
+    // MARK: Keeping the user's mouse out of the way
+
+    /// Tags PeaceMenu's own events, so the tap lets them through.
+    private static let marker: Int64 = 0x5045_4143_45 // "PEACE"
+    private static var tap: CFMachPort?
+    private static var exclusiveDepth = 0
+    private static let exclusiveLock = NSLock()
+    private static var exclusiveSince = Date.distantPast
+    private static var isExclusive: Bool { exclusiveLock.withLock { exclusiveDepth > 0 } }
+    /// Never hold the user's clicks off for more than 10 seconds, whatever happens.
+    private static var holdsClicks: Bool {
+        exclusiveLock.withLock { exclusiveDepth > 0 && Date().timeIntervalSince(exclusiveSince) < 10 }
+    }
+
+    /// Runs a series of moves as one: the user's clicks and drags are dropped throughout, so they
+    /// can't tangle with the drags PeaceMenu makes. The cursor is hidden only during each move
+    /// (keeping it hidden for the whole series made it look lost).
+    static func exclusive<T>(_ work: () -> T) -> T {
+        let first = exclusiveLock.withLock {
+            exclusiveDepth += 1
+            if exclusiveDepth == 1 { exclusiveSince = Date() }
+            return exclusiveDepth == 1
+        }
+        if first {
+            installTap()
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            DispatchQueue.main.async { Busy.start() }
+        }
+        defer {
+            let last = exclusiveLock.withLock { exclusiveDepth -= 1; return exclusiveDepth == 0 }
+            if last {
+                if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+                DispatchQueue.main.async { Busy.stop() }
+            }
+        }
+        return work()
+    }
+
+    /// The "busy but clickable" cursor (an arrow with a spinning wheel), shown while PeaceMenu
+    /// holds the user's clicks off, so it's clear the computer is busy, not stuck.
+    private enum Busy {
+        static var timer: Timer?
+        static var frame = 0
+        static let cursors: [NSCursor] = {
+            let dir = "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/HIServices.framework/Versions/A/Resources/cursors/busybutclickable/"
+            guard let pdf = NSImage(contentsOfFile: dir + "cursor.pdf") else { return [] }
+            let info = NSDictionary(contentsOfFile: dir + "info.plist")
+            let count = (info?["frames"] as? Int) ?? 15
+            let hot = NSPoint(x: (info?["hotx"] as? Double) ?? 5, y: (info?["hoty"] as? Double) ?? 5)
+            let w = pdf.size.width, h = pdf.size.height / CGFloat(count)
+            return (0..<count).map { i in
+                let img = NSImage(size: NSSize(width: w, height: h), flipped: false) { _ in
+                    pdf.draw(in: NSRect(x: 0, y: 0, width: w, height: h),
+                             from: NSRect(x: 0, y: pdf.size.height - CGFloat(i + 1) * h, width: w, height: h),
+                             operation: .sourceOver, fraction: 1)
+                    return true
+                }
+                return NSCursor(image: img, hotSpot: hot)
+            }
+        }()
+
+        static func start() {
+            _ = allowCursorInBackground
+            guard timer == nil, !cursors.isEmpty else { return }
+            timer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { _ in
+                cursors[frame % cursors.count].set()
+                frame += 1
+            }
+            RunLoop.main.add(timer!, forMode: .common)
+        }
+
+        static func stop() {
+            timer?.invalidate()
+            timer = nil
+            NSCursor.arrow.set()
+        }
+    }
+
+    /// A session event tap on the main run loop, off until `exclusive` turns it on.
+    private static func installTap() {
+        guard tap == nil else { return }
+        let types: [CGEventType] = [.leftMouseDown, .leftMouseUp, .leftMouseDragged, .rightMouseDown, .rightMouseUp,
+                                    .rightMouseDragged, .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel]
+        let mask = types.reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
+        let callback: CGEventTapCallBack = { _, type, event, _ in
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let tap = Mover.tap, Mover.isExclusive { CGEvent.tapEnable(tap: tap, enable: true) }
+                return Unmanaged.passUnretained(event)
+            }
+            guard Mover.holdsClicks, event.getIntegerValueField(.eventSourceUserData) != Mover.marker else {
+                return Unmanaged.passUnretained(event)
+            }
+            return nil // the user's click, while PeaceMenu is moving items
+        }
+        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                           eventsOfInterest: mask, callback: callback, userInfo: nil) else { return }
+        CGEvent.tapEnable(tap: port, enable: false)
+        let source = CFMachPortCreateRunLoopSource(nil, port, 0)
+        DispatchQueue.main.async { CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes) }
+        tap = port
+    }
+
     /// Waits until the windows have stayed put for 45 ms (at most 0.6 s).
     private static func settle(_ windows: [CGWindowID]) {
         var last = windows.map(frame(of:))
@@ -153,6 +255,7 @@ enum Mover {
         guard let e = CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: type,
                               mouseCursorPosition: p, mouseButton: .left) else { return nil }
         e.flags = command ? .maskCommand : []
+        e.setIntegerValueField(.eventSourceUserData, value: marker)
         e.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window))
         e.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window))
         e.setIntegerValueField(windowIDField, value: Int64(window))

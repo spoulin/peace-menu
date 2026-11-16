@@ -4,7 +4,7 @@ import ServiceManagement
 
 /// Owns PeaceMenu's items in the menu bar. From right to left:
 ///
-///     [hidden …] ‹ [unhideable] [ungrouped] G2│ [group 2 items] G1│ [group 1 items] ☮ [always visible] clock
+///     [always hidden …] ‹‹ [hidden …] ‹ [unhideable] [ungrouped] G2│ [group 2 items] G1│ [group 1 items] ☮ [always visible] clock
 ///
 /// "Unhideable" items are the ones macOS never lets an app hide, such as the purple
 /// screen-recording indicator. They come and go; PeaceMenu keeps them at the left end.
@@ -15,6 +15,9 @@ import ServiceManagement
 final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let mainKey = "peacemenu.main"
     static let hiddenKey = "peacemenu.hidden"
+    /// ‹‹, always stretched: what's left of it never shows, not even when ☮ reveals the
+    /// hidden icons. Folded groups and groups left out of the profile go there.
+    static let alwaysKey = "peacemenu.always"
     static func sepKey(_ id: UUID) -> String { "peacemenu.sep.\(id.uuidString)" }
 
     let store = Store.shared
@@ -22,6 +25,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var mainItem: NSStatusItem!
     private var hiddenItem: NSStatusItem!
+    private var alwaysItem: NSStatusItem?
+    /// ‹‹ has been put at the far left once; from then on it stays stretched.
+    private var alwaysPlaced: Bool {
+        get { UserDefaults.standard.bool(forKey: "alwaysPlaced") }
+        set { UserDefaults.standard.set(newValue, forKey: "alwaysPlaced") }
+    }
+    /// Where folded and left-out icons go.
+    private var deepKey: String { alwaysPlaced ? Self.alwaysKey : Self.hiddenKey }
     /// Unhideable items present the last time the watcher looked.
     private var unhideable: Set<String> = []
     private var watchTimer: Timer?
@@ -78,6 +89,15 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 b.action = #selector(hiddenClicked(_:))
             }
         }
+        enqueueCreation(key: Self.alwaysKey) { [unowned self] in
+            // Small until the first layout has put it at the far left: stretched anywhere
+            // else, it would push the whole bar off the screen.
+            let item = NSStatusBar.system.statusItem(withLength: alwaysPlaced ? 10_000 : 4)
+            item.autosaveName = "PeaceAlways"
+            item.behavior = []
+            item.button?.toolTip = "À gauche : icônes toujours cachées"
+            alwaysItem = item
+        }
         whenItemsReady { [unowned self] in
             loadActiveProfile()
             syncSeparators()
@@ -117,7 +137,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.layoutRunning = true
                 self.layoutQueue.async {
                     Thread.sleep(forTimeInterval: 0.3) // let the new item settle
-                    let failed = self.placeUnhideable()
+                    let failed = Mover.exclusive { self.placeUnhideable() }
                     DispatchQueue.main.async {
                         self.layoutRunning = false
                         if !failed.isEmpty { log("unhideable not moved: \(failed)") }
@@ -293,24 +313,25 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         b.attributedTitle = NSAttributedString(string: "")
         b.image = nil
         b.toolTip = "\(g.name) — clic : \(g.collapsed ? "afficher" : "replier") les icônes, clic droit : menu"
-        b.imagePosition = .imageLeading
-        // A name or a symbol gets an arrow that says whether the icons are shown. A line, a dot
-        // or a space becomes ▸ while the icons are folded, so something says they're there.
-        // An orange dot before the arrow says an icon of the folded group changed.
-        let arrow = g.collapsed ? "▸" : "▾"
+        b.imagePosition = .imageTrailing
+        // A name or a symbol gets a chevron after it: ⌄ while the icons are folded, › while they
+        // show (it points at them). A line, a dot or a space becomes ⌄ while folded, so something
+        // says the icons are there. An orange dot before the chevron says an icon changed.
         let changed = g.collapsed && changedGroups.contains(g.id)
         if changed { b.toolTip = "\(g.name) — une icône a changé. Clic : afficher les icônes" }
-        func arrowTitle(_ text: String) {
+        let chevron = chevronImage(down: g.collapsed)
+        func titled(_ text: String, image: NSImage?) {
             item.length = NSStatusItem.variableLength
-            let font = NSFont.systemFont(ofSize: 11, weight: .medium)
-            let title = NSMutableAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
-            if changed, let r = text.range(of: arrow, options: .backwards) {
-                title.insert(NSAttributedString(string: "●", attributes: [.font: NSFont.systemFont(ofSize: 8), .foregroundColor: NSColor.systemOrange, .baselineOffset: 1]),
-                             at: NSRange(r, in: text).location)
+            let title = NSMutableAttributedString(string: text, attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+            if changed {
+                title.append(NSAttributedString(string: (text.isEmpty ? "" : " ") + "●", attributes: [
+                    .font: NSFont.systemFont(ofSize: 8), .foregroundColor: NSColor.systemOrange, .baselineOffset: 1]))
             }
             b.attributedTitle = title
+            b.image = image
         }
-        if g.collapsed && [.line, .dot, .space].contains(g.style) { arrowTitle(arrow); return }
+        if g.collapsed && [.line, .dot, .space].contains(g.style) { titled("", image: chevron); return }
         switch g.style {
         case .line:
             item.length = 9
@@ -324,13 +345,34 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.length = 12
             b.image = symbol("circle.fill", size: 5)
         case .label:
-            arrowTitle("\(g.name) \(arrow)")
+            titled(g.name, image: chevron)
         case .symbol:
-            arrowTitle(" \(arrow)")
-            b.image = symbol(g.symbol, size: 12)
+            titled("", image: symbol(g.symbol, size: 12).map { side(by: $0, chevron) } ?? chevron)
         case .space:
             item.length = 10
         }
+    }
+
+    /// A bold chevron, as a template image so it follows the menu bar's colors.
+    private func chevronImage(down: Bool) -> NSImage? {
+        let img = NSImage(systemSymbolName: down ? "chevron.down" : "chevron.right", accessibilityDescription: down ? "replié" : "ouvert")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))
+        img?.isTemplate = true
+        return img
+    }
+
+    /// Two template images next to each other, with a small gap.
+    private func side(by left: NSImage, _ right: NSImage?) -> NSImage {
+        guard let right else { return left }
+        let gap: CGFloat = 3
+        let size = NSSize(width: left.size.width + gap + right.size.width, height: max(left.size.height, right.size.height))
+        let img = NSImage(size: size, flipped: false) { _ in
+            left.draw(in: NSRect(x: 0, y: (size.height - left.size.height) / 2, width: left.size.width, height: left.size.height))
+            right.draw(in: NSRect(x: left.size.width + gap, y: (size.height - right.size.height) / 2, width: right.size.width, height: right.size.height))
+            return true
+        }
+        img.isTemplate = true
+        return img
     }
 
     @objc private func separatorClicked(_ sender: NSStatusBarButton) {
@@ -400,20 +442,20 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // A second pass, after a pause and with the windows matched afresh, catches the moves
             // macOS ignored (seen when a click on the bar came during the first pass).
             var failed: [String] = []
-            for pass in 0..<2 {
+            Mover.exclusive { for pass in 0..<2 {
                 if pass == 1 {
                     guard !failed.isEmpty else { break }
                     Thread.sleep(forTimeInterval: 0.4)
                 }
                 let p = Placer(items: self.snapshot(quick: true), known: DispatchQueue.main.sync { self.ownWindows })
                 if folding {
-                    for key in keys where p.windows[key] != nil { p.hide(key, behind: Self.hiddenKey) }
+                    for key in keys where p.windows[key] != nil { p.hide(key, behind: self.deepKey) }
                 } else {
                     p.show(keys, rightOf: Self.sepKey(id))
                 }
                 failed = p.failed
                 log("group \(g.name) \(folding ? "folded" : "shown")\(pass == 1 ? " (second pass)" : ""), failed: \(failed)")
-            }
+            } }
             DispatchQueue.main.async {
                 self.layoutRunning = false
                 if self.layoutPending { self.layoutPending = false; self.applyLayout(thenHide: self.isHidden) }
@@ -459,7 +501,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         layoutRunning = true
         layoutQueue.async {
             let p = Placer(items: self.snapshot(quick: true), known: DispatchQueue.main.sync { self.ownWindows })
-            p.show([key], rightOf: Self.sepKey(groupID))
+            Mover.exclusive { p.show([key], rightOf: Self.sepKey(groupID)) }
             log("peek \(p.names[key] ?? key), failed: \(p.failed)")
             DispatchQueue.main.async {
                 self.layoutRunning = false
@@ -484,7 +526,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         layoutRunning = true
         layoutQueue.async {
             let p = Placer(items: self.snapshot(quick: true), known: DispatchQueue.main.sync { self.ownWindows })
-            if p.windows[key] != nil { p.hide(key, behind: Self.hiddenKey) }
+            if p.windows[key] != nil { Mover.exclusive { _ = p.hide(key, behind: self.deepKey) } }
             DispatchQueue.main.async {
                 self.layoutRunning = false
                 if self.layoutPending { self.layoutPending = false; self.applyLayout(thenHide: self.isHidden) }
@@ -571,6 +613,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func ownItems() -> [LiveItem] {
         guard let mainH = NSScreen.screens.first?.frame.height else { return [] }
         var list: [(String, String, NSStatusItem)] = [(Self.mainKey, "PeaceMenu", mainItem), (Self.hiddenKey, "Séparateur caché", hiddenItem)]
+        if let alwaysItem { list.append((Self.alwaysKey, "Zone toujours cachée", alwaysItem)) }
         for g in store.config.groups { if let s = separators[g.id] { list.append((Self.sepKey(g.id), "│ \(g.name)", s)) } }
         return list.compactMap { key, name, item in
             guard item.isVisible, let w = item.button?.window else { return nil }
@@ -605,7 +648,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self else { return }
             self.layoutQueue.async {
-                let failed = self.runLayout(groups: groups, visible: visible, showUngrouped: ungrouped, unhideable: present)
+                let failed = Mover.exclusive { self.runLayout(groups: groups, visible: visible, showUngrouped: ungrouped, unhideable: present) }
                 DispatchQueue.main.async {
                     self.layoutRunning = false
                     self.mainItem.button?.image = self.symbol("peacesign")
@@ -636,6 +679,20 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let assigned = Set(groups.flatMap { $0.items.map(\.key) })
 
+        // The first time, ‹‹ goes to the far left (a drop where nothing is drawn lands there),
+        // so every icon hidden so far stays revealable; then it's stretched for good.
+        if !DispatchQueue.main.sync(execute: { alwaysPlaced }), p.windows[Self.alwaysKey] != nil,
+           let leftmost = p.windows.keys.filter({ $0 != Self.alwaysKey })
+            .compactMap({ k in p.frame(k).map { (k, $0) } })
+            .min(by: { $0.1.minX < $1.1.minX })?.0 {
+            if p.place(Self.alwaysKey, leftOf: leftmost) {
+                DispatchQueue.main.sync { alwaysItem?.length = 10_000; alwaysPlaced = true }
+                Thread.sleep(forTimeInterval: 0.3)
+                log("layout: ‹‹ placed at the far left")
+            }
+        }
+        let deep = DispatchQueue.main.sync { deepKey }
+
         // Right to left, starting just left of ☮.
         var desired: [String] = []
         let closed = Set(groups.filter(\.collapsed).map(\.id))
@@ -662,13 +719,21 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if p.place(key, leftOf: anchor) { anchor = key }
         }
 
-        // Items of hidden groups that sit right of ‹ (for example next to the clock) go behind it.
-        // So do the titles of groups left out of the profile.
-        let hiddenKeys = groups.filter { !visible.contains($0.id) || closed.contains($0.id) }.flatMap { $0.items.map(\.key) }.filter { !Scanner.isUnhideable($0) }
+        // Icons in no group that ended up behind ‹‹ come back between ‹‹ and ‹, where ☮ shows them.
+        if deep == Self.alwaysKey {
+            for it in items where !it.isOurs && !it.isFixed && !assigned.contains(it.key) && !Scanner.isUnhideable(it.key) {
+                guard let a = p.frame(Self.alwaysKey), let f = p.frame(it.key), f.maxX <= a.minX + 2 else { continue }
+                _ = p.place(it.key, leftOf: Self.hiddenKey)
+            }
+        }
+
+        // Icons of folded groups and of groups left out of the profile go behind ‹‹ (behind ‹
+        // until ‹‹ is in place), and so do the titles of the groups left out.
+        let deepKeys = groups.filter { !visible.contains($0.id) || closed.contains($0.id) }.flatMap { $0.items.map(\.key) }.filter { !Scanner.isUnhideable($0) }
             + groups.filter { !visible.contains($0.id) }.map { Self.sepKey($0.id) }
-        for key in hiddenKeys {
-            guard let sep = p.frame(Self.hiddenKey), let f = p.frame(key), f.minX > sep.minX else { continue }
-            p.hide(key, behind: Self.hiddenKey) // anywhere left of ‹ will do
+        for key in deepKeys {
+            guard let sep = p.frame(deep), let f = p.frame(key), f.maxX > sep.minX + 2 else { continue }
+            p.hide(key, behind: deep)
         }
         return p.failed
     }
