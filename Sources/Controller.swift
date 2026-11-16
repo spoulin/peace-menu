@@ -623,6 +623,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(layoutRunning ? "Arranging…" : "Arrange Menu Bar Now", #selector(relayout), enabled: !layoutRunning)
         add("Settings…", #selector(openSettings), key: ",")
         menu.addItem(.separator())
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        add("PeaceMenu \(version)", nil, enabled: false)
+        add("Check for Updates…", #selector(checkForUpdates))
+        menu.addItem(.separator())
         add("Quit PeaceMenu", #selector(quit), key: "q")
         return menu
     }
@@ -640,6 +644,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleHidden() { setHidden(!isHidden) }
     @objc private func relayout() { applyLayout(thenHide: isHidden) }
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func checkForUpdates() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/spoulin/peace-menu/releases/latest")!)
+    }
     @objc func openAccessibility() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }

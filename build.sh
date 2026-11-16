@@ -2,8 +2,11 @@
 # Build PeaceMenu.app, sign it and install it in ~/Applications.
 # A stable signing identity keeps the Accessibility permission across rebuilds.
 #
-# VERSION=1.2.0 ./build.sh  sets the version shown in the app (default: Info.plist).
-# NO_INSTALL=1              builds build/PeaceMenu.app only.
+# VERSION=1.2.0 ./build.sh  sets the version shown in the app; without it, the latest git tag
+#                           (v1.2.0 gives 1.2.0), else the version in Info.plist.
+# UNIVERSAL=1               builds for both Apple silicon and Intel Macs, as releases do.
+# NO_INSTALL=1              builds build/PeaceMenu.app only (the Release workflow).
+# SIGN_KEYCHAIN=<path>      the keychain holding SIGN_ID, when it isn't the login one.
 set -euo pipefail
 cd "$(dirname "$0")"
 VERSION="${VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}"
@@ -19,11 +22,23 @@ DEST="$HOME/Applications/PeaceMenu.app"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/PeaceMenu" Sources/*.swift \
-	-framework AppKit -framework SwiftUI -framework ApplicationServices -framework ServiceManagement
+compile() { # compile <output> [target]
+	swiftc -O -swift-version 5 ${2:+-target "$2"} -o "$1" Sources/*.swift \
+		-framework AppKit -framework SwiftUI -framework ApplicationServices -framework ServiceManagement
+}
+if [[ -n "${UNIVERSAL:-}" ]]; then
+	MIN=$(/usr/libexec/PlistBuddy -c "Print LSMinimumSystemVersion" Info.plist)
+	compile build/PeaceMenu-arm64 "arm64-apple-macos$MIN"
+	compile build/PeaceMenu-x86_64 "x86_64-apple-macos$MIN"
+	lipo -create -output "$APP/Contents/MacOS/PeaceMenu" build/PeaceMenu-arm64 build/PeaceMenu-x86_64
+	rm -f build/PeaceMenu-arm64 build/PeaceMenu-x86_64
+else
+	compile "$APP/Contents/MacOS/PeaceMenu"
+fi
 cp Info.plist "$APP/Contents/Info.plist"
+cp Icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 /usr/libexec/PlistBuddy -c "Set CFBundleShortVersionString $VERSION" -c "Set CFBundleVersion $BUILD" "$APP/Contents/Info.plist"
-codesign --force --sign "$SIGN_ID" "$APP"
+codesign --force --sign "$SIGN_ID" ${SIGN_KEYCHAIN:+--keychain "$SIGN_KEYCHAIN"} "$APP"
 echo "Built $APP $VERSION ($BUILD)"
 [[ -n "${NO_INSTALL:-}" ]] && exit 0
 
