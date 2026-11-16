@@ -631,6 +631,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if layoutRunning { layoutPending = true; return }
         layoutRunning = true
+        Overlay.show()
         setHidden(false, autoHide: false)
         mainItem.button?.image = symbol("hourglass")
 
@@ -649,6 +650,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         self.layoutPending = false
                         self.applyLayout(thenHide: thenHide)
                     } else {
+                        Overlay.hide()
                         self.setHidden(thenHide)
                     }
                 }
@@ -686,46 +688,64 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let deep = DispatchQueue.main.sync { deepKey }
 
-        // Right to left, starting just left of ☮: the Always groups, ‹, then the On demand ones.
-        // Built right to left: a separator listed after its icons ends up left of them.
+        // Each group as it reads left to right: a separator on the left comes before its icons.
         let byID = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         func block(_ e: ProfileGroup) -> [String] {
             guard let g = byID[e.id] else { return [] }
             let icons = g.items.map(\.key).filter { !Scanner.isUnhideable($0) }
-            return g.titleOnLeft ? icons + [Self.sepKey(g.id)] : [Self.sepKey(g.id)] + icons
+            return g.titleOnLeft ? [Self.sepKey(g.id)] + icons : icons + [Self.sepKey(g.id)]
         }
         let loose = items.filter { !$0.isOurs && !$0.isFixed && !assigned.contains($0.key) && !Scanner.isUnhideable($0.key) }
-        var desired: [String] = []
-        for e in entries.reversed() where e.mode == .always { desired += block(e) }
+
+        // Right of ‹: the unhideable items, then the Always groups (and icons in no group, if
+        // Always), up to ☮. Left of ‹: the On demand groups.
+        var right = unhideable.sorted()
         if ungrouped == .always {
-            desired += loose.compactMap { it in p.frame(it.key).map { (it.key, $0) } }
+            right += loose.compactMap { it in p.frame(it.key).map { (it.key, $0) } }
                 .filter { $0.1.maxX <= mainFrame.minX + 1 }
-                .sorted { $0.1.minX > $1.1.minX }.map(\.0)
+                .sorted { $0.1.minX < $1.1.minX }.map(\.0)
         }
-        desired += unhideable.sorted()
-        desired.append(Self.hiddenKey)
-        for e in entries.reversed() where e.mode == .onDemand { desired += block(e) }
+        for e in entries where e.mode == .always { right += block(e) }
+        right = right.filter { p.windows[$0] != nil }
+        let demand = entries.filter { $0.mode == .onDemand }.flatMap(block).filter { p.windows[$0] != nil }
 
-        log("layout start: \(p.windows.count) of \(items.count) items matched, desired: \(desired)")
-        defer { log("layout done, failed: \(p.failed)") }
-
-        var anchor = Self.mainKey
-        for key in desired where p.windows[key] != nil {
-            if p.place(key, leftOf: anchor) { anchor = key }
-        }
-
-        DispatchQueue.main.async { self.knownKeys = Set(items.map(\.key)) }
-
-        // Icons in no group: On demand ones go left of the On demand groups (between ‹‹ and ‹),
-        // from between ‹ and ☮ or from behind ‹‹; Off ones go behind ‹‹.
+        // Icons in no group, when On demand, belong left of the On demand groups: the ones that
+        // strayed (between ‹ and ☮, or behind ‹‹) go back there.
+        var strays: [String] = []
         if ungrouped == .onDemand {
             for it in loose {
                 guard let h = p.frame(Self.hiddenKey), let m = p.frame(Self.mainKey), let f = p.frame(it.key) else { continue }
                 let shown = f.minX >= h.maxX - 2 && f.maxX <= m.minX + 2
                 let deepHidden = deep == Self.alwaysKey && (p.frame(Self.alwaysKey).map { f.maxX <= $0.minX + 2 } ?? false)
-                if (shown || deepHidden), p.place(it.key, leftOf: anchor) { anchor = it.key }
+                if shown || deepHidden { strays.append(it.key) }
             }
         }
+
+        log("layout start: \(p.windows.count) of \(items.count) items matched, right of ‹: \(right), On demand: \(strays + demand)")
+        defer { log("layout done, failed: \(p.failed)") }
+
+        // `keys`, left to right, already sit side by side just left of `anchor`?
+        func inOrder(_ keys: [String], leftOf anchor: String) -> Bool {
+            var a = anchor
+            for k in keys.reversed() {
+                guard p.leftNeighbour(of: a) == k else { return false }
+                a = k
+            }
+            return true
+        }
+        // Each item is dropped just left of the same anchor, ☮ or ‹, left to right: every one
+        // pushes the ones before it to the left. The anchor stays where it's drawn; a chain of
+        // anchors would run under the MacBook's notch, where nothing is drawn and drops fail.
+        let rightOK = inOrder([Self.hiddenKey] + right, leftOf: Self.mainKey)
+        if !rightOK { _ = p.place(Self.hiddenKey, leftOf: Self.mainKey) }
+        if !strays.isEmpty || !inOrder(demand, leftOf: Self.hiddenKey) {
+            for key in strays + demand { _ = p.place(key, leftOf: Self.hiddenKey) }
+        }
+        if !rightOK {
+            for key in right { _ = p.place(key, leftOf: Self.mainKey) }
+        }
+
+        DispatchQueue.main.async { self.knownKeys = Set(items.map(\.key)) }
 
         // Off groups (their icons and titles), and Off icons in no group, go behind ‹‹ (behind ‹
         // until ‹‹ is in place).
