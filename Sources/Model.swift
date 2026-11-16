@@ -25,6 +25,19 @@ struct ItemRef: Codable, Hashable, Identifiable {
     var id: String { key }
 }
 
+/// Where a group's separator sits relative to its icons.
+enum TitleSide: String, Codable, CaseIterable, Identifiable {
+    case automatic, left, right
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .left: return "Left of the icons"
+        case .right: return "Right of the icons"
+        }
+    }
+}
+
 struct MenuGroup: Codable, Identifiable, Hashable {
     var id = UUID()
     var name: String
@@ -36,6 +49,17 @@ struct MenuGroup: Codable, Identifiable, Hashable {
     var collapsed = false
     /// The color of the group's title in the menu bar, as "#RRGGBB"; nil follows the menu bar.
     var color: String? = nil
+    var titleSide: TitleSide = .automatic
+
+    /// A name reads like a title, so it goes left; a symbol, a line, a dot or a space closes
+    /// the group on its right.
+    var titleOnLeft: Bool {
+        switch titleSide {
+        case .left: return true
+        case .right: return false
+        case .automatic: return style == .label
+        }
+    }
 }
 
 extension MenuGroup {
@@ -48,6 +72,7 @@ extension MenuGroup {
         items = try c.decodeIfPresent([ItemRef].self, forKey: .items) ?? []
         collapsed = try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
         color = try c.decodeIfPresent(String.self, forKey: .color)
+        titleSide = try c.decodeIfPresent(TitleSide.self, forKey: .titleSide) ?? .automatic
     }
 }
 
@@ -58,8 +83,8 @@ enum ChangeSignal: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .off: return "Nothing"
-        case .badge: return "Dot on the group title"
-        case .peek: return "Dot, and show the icon for a moment"
+        case .badge: return "Dot on ☮"
+        case .peek: return "Dot, and show the hidden groups for a moment"
         }
     }
 }
@@ -77,12 +102,72 @@ enum MenuIcon: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct Profile: Codable, Identifiable, Hashable {
+/// What a profile does with a group, or with the icons in no group.
+enum GroupMode: String, Codable, CaseIterable, Identifiable {
+    /// Always in the menu bar.
+    case always
+    /// Hidden; a click on ☮ shows it for a while.
+    case onDemand
+    /// Never shown.
+    case off
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .always: return "Always"
+        case .onDemand: return "On demand"
+        case .off: return "Off"
+        }
+    }
+}
+
+struct ProfileGroup: Codable, Hashable {
+    var id: UUID
+    var mode: GroupMode
+}
+
+struct Profile: Identifiable, Hashable {
     var id = UUID()
     var name: String
-    /// The groups this profile shows, from left to right in the bar.
-    var visibleGroups: [UUID] = []
-    var showUngrouped = false
+    /// The profile's groups, from left to right in the bar, each with its mode.
+    var groups: [ProfileGroup] = []
+    var ungrouped: GroupMode = .onDemand
+    /// Before modes (config files up to 1.1): the groups shown, and whether ungrouped icons were.
+    var legacyVisible: [UUID]? = nil
+    var legacyShowUngrouped = false
+
+    func mode(of id: UUID) -> GroupMode { groups.first { $0.id == id }?.mode ?? .off }
+
+    mutating func setMode(_ mode: GroupMode, for id: UUID) {
+        if let i = groups.firstIndex(where: { $0.id == id }) { groups[i].mode = mode } else { groups.append(ProfileGroup(id: id, mode: mode)) }
+    }
+
+    /// Every group, in this profile's order; groups it doesn't know yet come last, Off.
+    func entries(for all: [MenuGroup]) -> [ProfileGroup] {
+        let known = Set(all.map(\.id))
+        let mine = groups.filter { known.contains($0.id) }
+        let seen = Set(mine.map(\.id))
+        return mine + all.filter { !seen.contains($0.id) }.map { ProfileGroup(id: $0.id, mode: .off) }
+    }
+}
+
+extension Profile: Codable {
+    enum CodingKeys: String, CodingKey { case id, name, groups, ungrouped, visibleGroups, showUngrouped }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        groups = try c.decodeIfPresent([ProfileGroup].self, forKey: .groups) ?? []
+        ungrouped = try c.decodeIfPresent(GroupMode.self, forKey: .ungrouped) ?? .onDemand
+        legacyVisible = try c.decodeIfPresent([UUID].self, forKey: .visibleGroups)
+        legacyShowUngrouped = try c.decodeIfPresent(Bool.self, forKey: .showUngrouped) ?? false
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(groups, forKey: .groups)
+        try c.encode(ungrouped, forKey: .ungrouped)
+    }
 }
 
 struct Config: Codable {
@@ -95,7 +180,7 @@ struct Config: Codable {
     var changeSignal: ChangeSignal = .peek
     /// 1 once each profile's visibleGroups is in bar order (left to right). Before, the bar
     /// followed the order of `groups`, first group rightmost.
-    var orderVersion = 1
+    var orderVersion = 2
     var menuIcon: MenuIcon = .classic
 
     init() {}
@@ -115,7 +200,7 @@ struct Config: Codable {
     static var starter: Config {
         var c = Config()
         let normal = Profile(name: "Normal")
-        c.profiles = [normal, Profile(name: "Show All", showUngrouped: true), Profile(name: "Focus")]
+        c.profiles = [normal, Profile(name: "Show All", ungrouped: .always), Profile(name: "Focus")]
         c.activeProfile = normal.id
         return c
     }
@@ -139,14 +224,19 @@ final class Store: ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         url = dir.appendingPathComponent("config.json")
         if let data = try? Data(contentsOf: url), var c = try? JSONDecoder().decode(Config.self, from: data) {
-            if c.orderVersion < 1 {
-                // Keep the bar as it looks: put each profile's groups in the order the bar used.
-                let leftToRight = c.groups.map(\.id).reversed()
+            if c.orderVersion < 2 {
+                // From shown groups and folding to modes. A group shown and open is Always, shown
+                // but folded is On demand, not shown is Off. Before version 1, the bar's order was
+                // the reverse of `groups`.
+                let leftToRight = Array(c.groups.map(\.id).reversed())
                 for i in c.profiles.indices {
-                    let shown = Set(c.profiles[i].visibleGroups)
-                    c.profiles[i].visibleGroups = leftToRight.filter { shown.contains($0) }
+                    var shown = c.profiles[i].legacyVisible ?? []
+                    if c.orderVersion < 1 { let s = Set(shown); shown = leftToRight.filter { s.contains($0) } }
+                    let folded = Set(c.groups.filter(\.collapsed).map(\.id))
+                    c.profiles[i].groups = shown.map { ProfileGroup(id: $0, mode: folded.contains($0) ? .onDemand : .always) }
+                    c.profiles[i].ungrouped = c.profiles[i].legacyShowUngrouped ? .always : .onDemand
                 }
-                c.orderVersion = 1
+                c.orderVersion = 2
             }
             config = c
             save()
@@ -184,7 +274,7 @@ final class Store: ObservableObject {
         c.groups.append(g)
         // A new group shows in the active profile; the others are edited by hand.
         if let i = c.profiles.firstIndex(where: { $0.id == (c.activeProfile ?? c.profiles.first?.id) }) {
-            c.profiles[i].visibleGroups.append(g.id)
+            c.profiles[i].groups.append(ProfileGroup(id: g.id, mode: .always))
         }
         config = c
         return g.id
@@ -193,7 +283,7 @@ final class Store: ObservableObject {
     func removeGroup(_ id: UUID) {
         var c = config
         c.groups.removeAll { $0.id == id }
-        for i in c.profiles.indices { c.profiles[i].visibleGroups.removeAll { $0 == id } }
+        for i in c.profiles.indices { c.profiles[i].groups.removeAll { $0.id == id } }
         config = c
     }
 }

@@ -10,28 +10,28 @@
 
 For macOS 14 or later, on Apple silicon and Intel Macs. See [Install](#install).
 
-A menu bar organizer for macOS. It hides the icons you don't need, sorts the others into
-named groups you can fold and unfold with a click, and switches between profiles: a different
-set of groups for work, for focus, or for the small screen of a laptop.
+A menu bar organizer for macOS. It sorts your menu bar icons into named groups, and profiles
+decide which groups are always there, which show with a click on ☮, and which stay hidden:
+one profile for work, one for focus, one for the small screen of a laptop.
 
 ## What it does
 
-- **Hides icons.** Click ☮ to show or hide the icons that are in no group. Icons of folded groups
-  and of groups left out of the profile stay hidden even then.
-- **Groups.** Put icons in named groups. Each group has a title in the menu bar (a name, a symbol,
-  a line, a dot or a space) and an optional color. Click a title to show or fold its icons; the
-  choice is kept.
-- **Profiles.** A profile says which groups show, in which order. Switch profiles from the ☮ menu.
-- **Change signal.** When an icon of a folded group changes (a VPN disconnects, for example), an
-  orange dot appears on the group's title, and the icon shows next to it for a moment.
+- **Groups.** Put icons in named groups. Each group has a separator in the menu bar (its name, a
+  symbol, a line, a dot or a space), left or right of its icons, in an optional color.
+- **Profiles.** In each profile, every group is **Always** (in the menu bar), **On demand** (hidden;
+  a click on ☮ shows it for a while) or **Off** (never shown), in the order you choose. Icons in
+  no group get one of these three too. Switch profiles from the ☮ menu.
+- **Change signal.** When an icon of an On demand group changes (a VPN disconnects, for example),
+  an orange dot appears on ☮, and the hidden groups can show for a moment.
 - **New icons.** When an app adds an icon, PeaceMenu puts it in its group, or behind the others.
-- **The purple recording indicator.** macOS never lets an app hide it; PeaceMenu keeps it at the
-  left end, out of the way of your groups.
+- **The purple recording indicator.** macOS never lets an app hide it; PeaceMenu keeps it just
+  right of ‹, out of the way of your groups.
+- **A colored ☮** if you like: rainbow or 70s stripes.
 
 From left to right, the menu bar looks like this:
 
 ```
-[always hidden…] ‹‹ [hidden…] ‹ [groups and their icons] ☮ [always visible] clock
+[Off…] ‹‹ [On demand groups] ‹ [Always groups] ☮ [always visible] clock
 ```
 
 ## Install
@@ -63,15 +63,14 @@ image and drag PeaceMenu onto Applications again, replacing the old one.
 
 | | |
 |---|---|
-| Click ☮ | Show or hide the icons that are in no group |
+| Click ☮ | Show or hide what the profile has On demand |
 | Right-click or ⌥-click ☮ | Profiles, groups, Settings, Check for Updates |
-| Click a group title | Show or fold the group's icons |
-| Right-click a group title | The group's menu |
+| Click a group's separator | The group's menu |
 | ⌘-drag an icon right of ☮ | It always stays visible |
 
-**Settings › Groups:** create groups, add icons to them, pick the title's style and color.
-**Settings › Profiles:** choose the groups each profile shows and their order (top to bottom is
-left to right in the menu bar). **Settings › General:** when hidden icons hide again, what happens
+**Settings › Groups:** create groups, add icons to them, pick the separator's style, side and color.
+**Settings › Profiles:** for each profile, set every group to Always, On demand or Off, and their
+order (top to bottom is left to right in the menu bar). **Settings › General:** when hidden icons hide again, what happens
 when an icon of a folded group changes, launch at login.
 
 ## How it works

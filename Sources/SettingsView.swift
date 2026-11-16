@@ -98,6 +98,12 @@ struct GroupDetail: View {
                 Picker("Separator", selection: group.style) {
                     ForEach(SeparatorStyle.allCases) { Text($0.title).tag($0) }
                 }
+                // With Automatic, the style decides the side.
+                .onChange(of: group.wrappedValue.style) { old, new in
+                    if group.wrappedValue.titleSide == .automatic && (old == .label) != (new == .label) {
+                        controller.applyLayout(thenHide: controller.isHidden)
+                    }
+                }
                 if group.wrappedValue.style == .symbol {
                     HStack {
                         TextField("SF Symbol", text: group.symbol)
@@ -116,10 +122,11 @@ struct GroupDetail: View {
                             .labelsHidden()
                     }
                 }
-                Toggle("Icons folded", isOn: Binding(
-                    get: { group.wrappedValue.collapsed },
-                    set: { controller.setCollapsed(groupID, $0) }))
-                Text("The separator stays in the menu bar while the group is in the active profile; click it to show or fold the group's icons.")
+                Picker("Separator position", selection: group.titleSide) {
+                    ForEach(TitleSide.allCases) { Text($0.title).tag($0) }
+                }
+                .onChange(of: group.wrappedValue.titleSide) { _, _ in controller.applyLayout(thenHide: controller.isHidden) }
+                Text("Automatic: a name goes left of the icons, like a title; a symbol, a line, a dot or a space goes right. Whether this group shows is set by each profile (Profiles tab).")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Icons in this group (right to left)") {
@@ -191,20 +198,19 @@ struct ProfilesTab: View {
             })
     }
 
-    private func groupToggle(_ g: MenuGroup, in p: Binding<Profile>) -> some View {
-        Toggle(isOn: Binding(
-            get: { p.wrappedValue.visibleGroups.contains(g.id) },
-            set: { on in
-                p.wrappedValue.visibleGroups.removeAll { $0 == g.id }
-                if on { p.wrappedValue.visibleGroups.append(g.id) }
-            })) { Label(g.name, systemImage: g.symbol) }
+    private func modePicker(_ g: MenuGroup, in p: Binding<Profile>) -> some View {
+        Picker(selection: Binding(
+            get: { p.wrappedValue.mode(of: g.id) },
+            set: { p.wrappedValue.setMode($0, for: g.id) })) {
+            ForEach(GroupMode.allCases) { Text($0.title).tag($0) }
+        } label: { Label(g.name, systemImage: g.symbol) }
     }
 
     private func move(_ id: UUID, by step: Int, in p: Binding<Profile>) {
-        var list = p.wrappedValue.visibleGroups
-        guard let i = list.firstIndex(of: id), list.indices.contains(i + step) else { return }
+        var list = p.wrappedValue.entries(for: store.config.groups)
+        guard let i = list.firstIndex(where: { $0.id == id }), list.indices.contains(i + step) else { return }
         list.swapAt(i, i + step)
-        p.wrappedValue.visibleGroups = list
+        p.wrappedValue.groups = list
     }
 
     var body: some View {
@@ -222,7 +228,7 @@ struct ProfilesTab: View {
                 }
                 HStack(spacing: 4) {
                     Button {
-                        let p = Profile(name: "New Profile", visibleGroups: store.config.groups.map(\.id))
+                        let p = Profile(name: "New Profile", groups: store.config.groups.map { ProfileGroup(id: $0.id, mode: .always) })
                         store.config.profiles.append(p)
                         selection = p.id
                     } label: { Image(systemName: "plus") }
@@ -247,41 +253,39 @@ struct ProfilesTab: View {
                         if store.config.groups.isEmpty {
                             Text("No groups yet.").foregroundStyle(.secondary)
                         }
-                        // Shown groups first, in their order in the bar; then the others.
-                        let shown = p.wrappedValue.visibleGroups.compactMap { id in store.config.groups.first { $0.id == id } }
-                        let others = store.config.groups.filter { !p.wrappedValue.visibleGroups.contains($0.id) }
-                        ForEach(Array(shown.enumerated()), id: \.element.id) { i, g in
+                        let groups = p.wrappedValue.entries(for: store.config.groups).compactMap { e in store.config.groups.first { $0.id == e.id } }
+                        ForEach(Array(groups.enumerated()), id: \.element.id) { i, g in
                             HStack {
-                                groupToggle(g, in: p)
-                                Spacer()
+                                modePicker(g, in: p)
                                 Button { move(g.id, by: -1, in: p) } label: { Image(systemName: "chevron.up") }
                                     .disabled(i == 0).help("Move left")
                                 Button { move(g.id, by: 1, in: p) } label: { Image(systemName: "chevron.down") }
-                                    .disabled(i == shown.count - 1).help("Move right")
+                                    .disabled(i == groups.count - 1).help("Move right")
                             }
                             .buttonStyle(.borderless)
                         }
-                        ForEach(others) { g in groupToggle(g, in: p) }
-                        Toggle("Ungrouped icons", isOn: p.showUngrouped)
+                        Picker(selection: p.ungrouped) {
+                            ForEach(GroupMode.allCases) { Text($0.title).tag($0) }
+                        } label: { Label("Icons in no group", systemImage: "square.dashed") }
                     } header: {
-                        Text("Shown groups")
+                        Text("Groups")
                     } footer: {
-                        Text("Top to bottom: left to right in the menu bar, the last one just left of ☮.")
+                        Text("Always: in the menu bar. On demand: hidden, a click on ☮ shows it for a while. Off: never shown. Top to bottom is left to right in the menu bar.")
                     }
                     Section {
                         Button(id == store.activeProfile?.id ? "Reapply This Profile" : "Activate This Profile") {
                             controller.activateProfile(id)
                         }
                     } footer: {
-                        Text("Groups not shown go behind ‹‹ with their icons. Clicking ☮ only shows ungrouped icons.")
+                        Text("Changes to the active profile apply right away.")
                     }
                 }
                 .formStyle(.grouped)
                 // The active profile applies its changes right away.
-                .onChange(of: p.wrappedValue.visibleGroups) { _, _ in
+                .onChange(of: p.wrappedValue.groups) { _, _ in
                     if id == store.activeProfile?.id { controller.activateProfile(id) }
                 }
-                .onChange(of: p.wrappedValue.showUngrouped) { _, _ in
+                .onChange(of: p.wrappedValue.ungrouped) { _, _ in
                     if id == store.activeProfile?.id { controller.activateProfile(id) }
                 }
             } else {
@@ -310,8 +314,8 @@ struct GeneralTab: View {
                 Text("The colored icons are bright on a dark menu bar and darker on a light one.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Ungrouped icons") {
-                Picker("After ☮ shows them, hide again after", selection: $store.config.autoHideDelay) {
+            Section("Showing hidden icons") {
+                Picker("Hide again after", selection: $store.config.autoHideDelay) {
                     Text("Never").tag(0.0)
                     Text("5 seconds").tag(5.0)
                     Text("10 seconds").tag(10.0)
@@ -319,10 +323,10 @@ struct GeneralTab: View {
                     Text("1 minute").tag(60.0)
                 }
                 Toggle("Hide them at launch", isOn: $store.config.hideOnLaunch)
-                Text("Icons in no group sit behind ‹; a click on ☮ shows them. Groups open and fold with a click on their title, and stay as you leave them.")
+                Text("A click on ☮ shows what the profile has On demand; it hides again after this delay.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Folded groups") {
+            Section("On demand groups") {
                 Picker("When an icon changes", selection: $store.config.changeSignal) {
                     ForEach(ChangeSignal.allCases) { Text($0.title).tag($0) }
                 }
