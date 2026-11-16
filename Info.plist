@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>fr</string>
+	<string>en</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.stephanepoulin.peacemenu</string>
 	<key>CFBundleName</key>

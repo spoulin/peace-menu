@@ -86,7 +86,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 b.target = self
                 b.action = #selector(mainClicked(_:))
                 b.sendAction(on: [.leftMouseUp, .rightMouseUp])
-                b.toolTip = "PeaceMenu — clic : afficher/masquer, clic droit : menu"
+                b.toolTip = "PeaceMenu — click: show or hide icons, right-click: menu"
             }
         }
         enqueueCreation(key: Self.hiddenKey) { [unowned self] in
@@ -104,7 +104,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let item = NSStatusBar.system.statusItem(withLength: alwaysPlaced ? 10_000 : 4)
             item.autosaveName = "PeaceAlways"
             item.behavior = []
-            item.button?.toolTip = "À gauche : icônes toujours cachées"
+            item.button?.toolTip = "Left of here: icons always hidden"
             alwaysItem = item
         }
         whenItemsReady { [unowned self] in
@@ -330,13 +330,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         b.title = ""
         b.attributedTitle = NSAttributedString(string: "")
         b.image = nil
-        b.toolTip = "\(g.name) — clic : \(g.collapsed ? "afficher" : "replier") les icônes, clic droit : menu"
+        b.toolTip = "\(g.name) — click: \(g.collapsed ? "show" : "fold") the icons, right-click: menu"
         b.imagePosition = .imageTrailing
         // A name or a symbol gets a chevron after it: ⌄ while the icons are folded, › while they
         // show (it points at them). A line, a dot or a space becomes ⌄ while folded, so something
         // says the icons are there. An orange dot before the chevron says an icon changed.
         let changed = g.collapsed && changedGroups.contains(g.id)
-        if changed { b.toolTip = "\(g.name) — une icône a changé. Clic : afficher les icônes" }
+        if changed { b.toolTip = "\(g.name) — an icon changed. Click: show the icons" }
         let chevron = chevronImage(down: g.collapsed)
         func titled(_ text: String, image: NSImage?) {
             item.length = NSStatusItem.variableLength
@@ -373,7 +373,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// A bold chevron, as a template image so it follows the menu bar's colors.
     private func chevronImage(down: Bool) -> NSImage? {
-        let img = NSImage(systemSymbolName: down ? "chevron.down" : "chevron.right", accessibilityDescription: down ? "replié" : "ouvert")?
+        let img = NSImage(systemSymbolName: down ? "chevron.down" : "chevron.right", accessibilityDescription: down ? "folded" : "open")?
             .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))
         img?.isTemplate = true
         return img
@@ -404,16 +404,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let title = NSMenuItem(title: g.name, action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
-        let fold = NSMenuItem(title: g.collapsed ? "Afficher les icônes" : "Replier les icônes", action: #selector(toggleCollapsedFromMenu(_:)), keyEquivalent: "")
+        let fold = NSMenuItem(title: g.collapsed ? "Show Icons" : "Fold Icons", action: #selector(toggleCollapsedFromMenu(_:)), keyEquivalent: "")
         fold.representedObject = id
         fold.target = self
         menu.addItem(fold)
-        let hide = NSMenuItem(title: "Masquer ce groupe", action: #selector(toggleGroupFromMenu(_:)), keyEquivalent: "")
+        let hide = NSMenuItem(title: "Hide This Group", action: #selector(toggleGroupFromMenu(_:)), keyEquivalent: "")
         hide.representedObject = id
         hide.target = self
         menu.addItem(hide)
         menu.addItem(.separator())
-        let settings = NSMenuItem(title: "Réglages…", action: #selector(openSettings), keyEquivalent: "")
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: "")
         settings.target = self
         menu.addItem(settings)
         showMenu(menu, on: item)
@@ -598,29 +598,29 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if !AXIsProcessTrusted() {
-            add("⚠︎ Autoriser l'Accessibilité…", #selector(openAccessibility))
+            add("⚠︎ Allow Accessibility…", #selector(openAccessibility))
             menu.addItem(.separator())
         }
 
-        menu.addItem(.sectionHeader(title: "Profils"))
+        menu.addItem(.sectionHeader(title: "Profiles"))
         for p in store.config.profiles {
             add(p.name, #selector(profileFromMenu(_:)), p.id, on: p.id == store.activeProfile?.id)
         }
         if !store.config.groups.isEmpty {
             menu.addItem(.separator())
-            menu.addItem(.sectionHeader(title: "Groupes affichés"))
+            menu.addItem(.sectionHeader(title: "Shown Groups"))
             for g in store.config.groups {
                 add(g.name, #selector(toggleGroupFromMenu(_:)), g.id, on: visibleGroups.contains(g.id))
             }
         }
-        add("Icônes sans groupe", #selector(toggleUngrouped), on: showUngrouped)
+        add("Ungrouped Icons", #selector(toggleUngrouped), on: showUngrouped)
 
         menu.addItem(.separator())
-        add(isHidden ? "Afficher les icônes cachées" : "Masquer les icônes", #selector(toggleHidden))
-        add(layoutRunning ? "Rangement en cours…" : "Ranger la barre maintenant", #selector(relayout), enabled: !layoutRunning)
-        add("Réglages…", #selector(openSettings), key: ",")
+        add(isHidden ? "Show Hidden Icons" : "Hide Icons", #selector(toggleHidden))
+        add(layoutRunning ? "Arranging…" : "Arrange Menu Bar Now", #selector(relayout), enabled: !layoutRunning)
+        add("Settings…", #selector(openSettings), key: ",")
         menu.addItem(.separator())
-        add("Quitter PeaceMenu", #selector(quit), key: "q")
+        add("Quit PeaceMenu", #selector(quit), key: "q")
         return menu
     }
 
@@ -662,8 +662,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// PeaceMenu's own items with their frames. Main thread only.
     func ownItems() -> [LiveItem] {
         guard let mainH = NSScreen.screens.first?.frame.height else { return [] }
-        var list: [(String, String, NSStatusItem)] = [(Self.mainKey, "PeaceMenu", mainItem), (Self.hiddenKey, "Séparateur caché", hiddenItem)]
-        if let alwaysItem { list.append((Self.alwaysKey, "Zone toujours cachée", alwaysItem)) }
+        var list: [(String, String, NSStatusItem)] = [(Self.mainKey, "PeaceMenu", mainItem), (Self.hiddenKey, "Hidden separator", hiddenItem)]
+        if let alwaysItem { list.append((Self.alwaysKey, "Always-hidden zone", alwaysItem)) }
         for g in store.config.groups { if let s = separators[g.id] { list.append((Self.sepKey(g.id), "│ \(g.name)", s)) } }
         return list.compactMap { key, name, item in
             guard item.isVisible, let w = item.button?.window else { return nil }
@@ -702,7 +702,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 DispatchQueue.main.async {
                     self.layoutRunning = false
                     self.mainItem.button?.image = self.symbol("peacesign")
-                    if !failed.isEmpty { self.mainItem.button?.toolTip = "PeaceMenu — pas pu déplacer : \(failed.joined(separator: ", "))" }
+                    if !failed.isEmpty { self.mainItem.button?.toolTip = "PeaceMenu — couldn't move: \(failed.joined(separator: ", "))" }
                     self.live.refresh(controller: self)
                     if self.layoutPending {
                         self.layoutPending = false

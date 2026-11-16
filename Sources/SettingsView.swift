@@ -10,19 +10,19 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             TabView {
                 GroupsTab(store: store, live: live, controller: controller)
-                    .tabItem { Label("Groupes", systemImage: "square.grid.2x2") }
+                    .tabItem { Label("Groups", systemImage: "square.grid.2x2") }
                 ProfilesTab(store: store, controller: controller)
-                    .tabItem { Label("Profils", systemImage: "person.crop.rectangle.stack") }
+                    .tabItem { Label("Profiles", systemImage: "person.crop.rectangle.stack") }
                 GeneralTab(store: store, controller: controller)
-                    .tabItem { Label("Général", systemImage: "gearshape") }
+                    .tabItem { Label("General", systemImage: "gearshape") }
             }
             .padding([.horizontal, .top])
             Divider().padding(.top, 8)
             HStack {
-                Text("Les changements de groupes s'appliquent à la barre quand tu cliques « Ranger la barre ».")
+                Text("Changes to groups apply to the menu bar when you click Arrange Menu Bar.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Ranger la barre") { controller.applyLayout(thenHide: controller.isHidden) }
+                Button("Arrange Menu Bar") { controller.applyLayout(thenHide: controller.isHidden) }
                     .keyboardShortcut(.defaultAction)
             }
             .padding()
@@ -49,7 +49,7 @@ struct GroupsTab: View {
                     .onMove { store.config.groups.move(fromOffsets: $0, toOffset: $1) }
                 }
                 HStack(spacing: 4) {
-                    Button { selection = store.addGroup(named: "Nouveau groupe") } label: { Image(systemName: "plus") }
+                    Button { selection = store.addGroup(named: "New Group") } label: { Image(systemName: "plus") }
                     Button {
                         if let id = selection { selection = nil; store.removeGroup(id) }
                     } label: { Image(systemName: "minus") }
@@ -57,7 +57,7 @@ struct GroupsTab: View {
                     Spacer()
                 }
                 .buttonStyle(.borderless)
-                Text("Le premier groupe est le plus près de ☮. Glisse pour changer l'ordre.")
+                Text("Each profile sets the order of its groups in the menu bar (Profiles tab).")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .frame(width: 210)
@@ -67,7 +67,7 @@ struct GroupsTab: View {
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "square.grid.2x2").font(.largeTitle).foregroundStyle(.secondary)
-                    Text("Crée un groupe avec +, puis ajoutes-y des icônes.").foregroundStyle(.secondary)
+                    Text("Create a group with +, then add icons to it.").foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -94,25 +94,25 @@ struct GroupDetail: View {
     var body: some View {
         Form {
             Section {
-                TextField("Nom", text: group.name)
-                Picker("Séparateur", selection: group.style) {
+                TextField("Name", text: group.name)
+                Picker("Separator", selection: group.style) {
                     ForEach(SeparatorStyle.allCases) { Text($0.title).tag($0) }
                 }
                 if group.wrappedValue.style == .symbol {
                     HStack {
-                        TextField("Symbole SF", text: group.symbol)
+                        TextField("SF Symbol", text: group.symbol)
                         Image(systemName: group.wrappedValue.symbol)
                     }
                 }
-                Toggle("Icônes repliées", isOn: Binding(
+                Toggle("Icons folded", isOn: Binding(
                     get: { group.wrappedValue.collapsed },
                     set: { controller.setCollapsed(groupID, $0) }))
-                Text("Le séparateur reste dans la barre tant que le groupe fait partie du profil ; un clic dessus affiche ou replie les icônes du groupe.")
+                Text("The separator stays in the menu bar while the group is in the active profile; click it to show or fold the group's icons.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Icônes du groupe (de droite à gauche)") {
+            Section("Icons in this group (right to left)") {
                 if group.wrappedValue.items.isEmpty {
-                    Text("Aucune icône. Ajoute-en depuis la liste ci-dessous.").foregroundStyle(.secondary)
+                    Text("No icons yet. Add some from the list below.").foregroundStyle(.secondary)
                 }
                 List {
                     ForEach(group.wrappedValue.items) { ref in
@@ -120,7 +120,7 @@ struct GroupDetail: View {
                             ItemIcon(bundleID: ref.bundleID)
                             Text(ref.name)
                             if !live.items.contains(where: { $0.key == ref.key }) {
-                                Text("absente").font(.caption).foregroundStyle(.secondary)
+                                Text("not running").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Button { group.wrappedValue.items.removeAll { $0.key == ref.key } } label: {
@@ -132,15 +132,15 @@ struct GroupDetail: View {
                 }
                 .frame(minHeight: 90)
             }
-            Section("Ajouter une icône de la barre") {
+            Section("Add a menu bar icon") {
                 let free = live.items.filter { item in !group.wrappedValue.items.contains { $0.key == item.key } }
-                if free.isEmpty { Text("Toutes les icônes sont déjà dans ce groupe.").foregroundStyle(.secondary) }
+                if free.isEmpty { Text("Every icon is already in this group.").foregroundStyle(.secondary) }
                 ForEach(free, id: \.key) { item in
                     HStack {
                         ItemIcon(bundleID: item.bundleID)
                         Text(item.name)
                         if let gi = store.groupIndex(containing: item.key) {
-                            Text("dans « \(store.config.groups[gi].name) »").font(.caption).foregroundStyle(.secondary)
+                            Text("in “\(store.config.groups[gi].name)”").font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Button { store.assign(item.ref, to: groupID) } label: { Image(systemName: "plus.circle") }
@@ -210,7 +210,7 @@ struct ProfilesTab: View {
                 }
                 HStack(spacing: 4) {
                     Button {
-                        let p = Profile(name: "Nouveau profil", visibleGroups: store.config.groups.map(\.id))
+                        let p = Profile(name: "New Profile", visibleGroups: store.config.groups.map(\.id))
                         store.config.profiles.append(p)
                         selection = p.id
                     } label: { Image(systemName: "plus") }
@@ -230,10 +230,10 @@ struct ProfilesTab: View {
             if let id = selection, store.config.profiles.contains(where: { $0.id == id }) {
                 let p = binding(id)
                 Form {
-                    Section { TextField("Nom", text: p.name) }
+                    Section { TextField("Name", text: p.name) }
                     Section {
                         if store.config.groups.isEmpty {
-                            Text("Aucun groupe pour l'instant.").foregroundStyle(.secondary)
+                            Text("No groups yet.").foregroundStyle(.secondary)
                         }
                         // Shown groups first, in their order in the bar; then the others.
                         let shown = p.wrappedValue.visibleGroups.compactMap { id in store.config.groups.first { $0.id == id } }
@@ -243,25 +243,25 @@ struct ProfilesTab: View {
                                 groupToggle(g, in: p)
                                 Spacer()
                                 Button { move(g.id, by: -1, in: p) } label: { Image(systemName: "chevron.up") }
-                                    .disabled(i == 0).help("Plus à gauche")
+                                    .disabled(i == 0).help("Move left")
                                 Button { move(g.id, by: 1, in: p) } label: { Image(systemName: "chevron.down") }
-                                    .disabled(i == shown.count - 1).help("Plus à droite")
+                                    .disabled(i == shown.count - 1).help("Move right")
                             }
                             .buttonStyle(.borderless)
                         }
                         ForEach(others) { g in groupToggle(g, in: p) }
-                        Toggle("Icônes sans groupe", isOn: p.showUngrouped)
+                        Toggle("Ungrouped icons", isOn: p.showUngrouped)
                     } header: {
-                        Text("Groupes affichés")
+                        Text("Shown groups")
                     } footer: {
-                        Text("De haut en bas : de gauche à droite dans la barre, le dernier juste à gauche de ☮.")
+                        Text("Top to bottom: left to right in the menu bar, the last one just left of ☮.")
                     }
                     Section {
-                        Button(id == store.activeProfile?.id ? "Réappliquer ce profil" : "Activer ce profil") {
+                        Button(id == store.activeProfile?.id ? "Reapply This Profile" : "Activate This Profile") {
                             controller.activateProfile(id)
                         }
                     } footer: {
-                        Text("Les groupes non affichés vont derrière ‹‹ avec leurs icônes. Un clic sur ☮ ne montre que les icônes sans groupe.")
+                        Text("Groups not shown go behind ‹‹ with their icons. Clicking ☮ only shows ungrouped icons.")
                     }
                 }
                 .formStyle(.grouped)
@@ -273,7 +273,7 @@ struct ProfilesTab: View {
                     if id == store.activeProfile?.id { controller.activateProfile(id) }
                 }
             } else {
-                Text("Choisis un profil.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text("Choose a profile.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .padding(8)
@@ -291,25 +291,25 @@ struct GeneralTab: View {
 
     var body: some View {
         Form {
-            Section("Masquage") {
-                Picker("Remasquer automatiquement après", selection: $store.config.autoHideDelay) {
-                    Text("Jamais").tag(0.0)
-                    Text("5 secondes").tag(5.0)
-                    Text("10 secondes").tag(10.0)
-                    Text("30 secondes").tag(30.0)
+            Section("Hiding") {
+                Picker("Hide again after", selection: $store.config.autoHideDelay) {
+                    Text("Never").tag(0.0)
+                    Text("5 seconds").tag(5.0)
+                    Text("10 seconds").tag(10.0)
+                    Text("30 seconds").tag(30.0)
                     Text("1 minute").tag(60.0)
                 }
-                Toggle("Masquer les icônes au démarrage", isOn: $store.config.hideOnLaunch)
+                Toggle("Hide icons at launch", isOn: $store.config.hideOnLaunch)
             }
-            Section("Groupes repliés") {
-                Picker("Quand une icône change", selection: $store.config.changeSignal) {
+            Section("Folded groups") {
+                Picker("When an icon changes", selection: $store.config.changeSignal) {
                     ForEach(ChangeSignal.allCases) { Text($0.title).tag($0) }
                 }
-                Text("PeaceMenu voit un changement quand l'app modifie le texte ou la largeur de son icône. macOS ne dessine pas les icônes cachées : un changement d'image seule (une pastille Slack, par exemple) passe inaperçu.")
+                Text("PeaceMenu sees a change when an app changes its icon's text or width. macOS doesn't draw hidden icons, so a change of picture alone (a Slack badge, for example) goes unnoticed.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Démarrage") {
-                Toggle("Ouvrir PeaceMenu à l'ouverture de session", isOn: $launchAtLogin)
+            Section("Startup") {
+                Toggle("Open PeaceMenu at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in
                         do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
                         catch { launchAtLogin = SMAppService.mainApp.status == .enabled }
@@ -320,15 +320,15 @@ struct GeneralTab: View {
                     Image(systemName: axTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundStyle(axTrusted ? .green : .orange)
                     VStack(alignment: .leading) {
-                        Text("Accessibilité")
-                        Text("Pour lire les icônes de la barre et les déplacer.").font(.caption).foregroundStyle(.secondary)
+                        Text("Accessibility")
+                        Text("To read the menu bar icons and move them.").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if !axTrusted { Button("Ouvrir les réglages") { controller.openAccessibility() } }
+                    if !axTrusted { Button("Open Settings") { controller.openAccessibility() } }
                 }
             }
-            Section("Utilisation") {
-                Text("Clic sur ☮ : afficher ou masquer les icônes cachées.\nClic droit ou ⌥-clic sur ☮ : profils, groupes et réglages.\nClic sur un séparateur : masquer son groupe.\n⌘-glisser une icône à droite de ☮ : elle reste toujours visible.")
+            Section("How to use") {
+                Text("Click ☮: show or hide the hidden icons.\nRight-click or ⌥-click ☮: profiles, groups and settings.\nClick a group title: show or fold its icons. Right-click it: the group's menu.\n⌘-drag an icon right of ☮: it always stays visible.")
                     .font(.callout)
             }
         }

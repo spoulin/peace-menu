@@ -51,13 +51,13 @@ enum Scanner {
     }
 
     static let systemNames: [String: String] = [
-        "battery": "Batterie", "wifi": "Wi‑Fi", "bluetooth": "Bluetooth", "focusmode": "Concentration",
-        "now-playing": "À l'écoute", "sound": "Son", "display": "Écran", "airdrop": "AirDrop",
-        "screenmirroring": "Recopie de l'écran", "keyboardbrightness": "Luminosité du clavier",
-        "textinput": "Saisie", "timemachine": "Time Machine", "vpn": "VPN", "user": "Utilisateur",
-        "accessibility": "Accessibilité", "hearing": "Audition", "stagemanager": "Stage Manager",
-        "siri": "Siri", "spotlight": "Spotlight", "weather": "Météo", "voicecontrol": "Contrôle vocal",
-        "audiovideo": "Enregistrement en cours",
+        "battery": "Battery", "wifi": "Wi‑Fi", "bluetooth": "Bluetooth", "focusmode": "Focus",
+        "now-playing": "Now Playing", "sound": "Sound", "display": "Display", "airdrop": "AirDrop",
+        "screenmirroring": "Screen Mirroring", "keyboardbrightness": "Keyboard Brightness",
+        "textinput": "Text Input", "timemachine": "Time Machine", "vpn": "VPN", "user": "User",
+        "accessibility": "Accessibility", "hearing": "Hearing", "stagemanager": "Stage Manager",
+        "siri": "Siri", "spotlight": "Spotlight", "weather": "Weather", "voicecontrol": "Voice Control",
+        "audiovideo": "Recording",
     ]
 
     /// Processes already asked, and those that had items then. Asking all ~180 processes takes
@@ -94,7 +94,7 @@ enum Scanner {
                 var name = appName
                 if ident.hasPrefix("com.apple.menuextra.") {
                     let short = String(ident.dropFirst("com.apple.menuextra.".count))
-                    name = systemNames[short] ?? (isUnhideable(ident) ? "Toujours visible (\(short))" : short.capitalized)
+                    name = systemNames[short] ?? (isUnhideable(ident) ? "Always visible (\(short))" : short.capitalized)
                 }
                 found.append((key, name, f, fixedIDs.contains(ident), state(k, width: f.width)))
                 n += 1

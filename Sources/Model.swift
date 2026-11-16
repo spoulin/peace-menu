@@ -7,11 +7,11 @@ enum SeparatorStyle: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .line: return "Trait"
-        case .dot: return "Point"
-        case .label: return "Nom du groupe"
-        case .symbol: return "Symbole"
-        case .space: return "Espace vide"
+        case .line: return "Line"
+        case .dot: return "Dot"
+        case .label: return "Group name"
+        case .symbol: return "Symbol"
+        case .space: return "Blank space"
         }
     }
 }
@@ -54,9 +54,9 @@ enum ChangeSignal: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .off: return "Rien"
-        case .badge: return "Pastille sur le titre du groupe"
-        case .peek: return "Pastille, et montrer l'icône un moment"
+        case .off: return "Nothing"
+        case .badge: return "Dot on the group title"
+        case .peek: return "Dot, and show the icon for a moment"
         }
     }
 }
@@ -97,7 +97,7 @@ struct Config: Codable {
     static var starter: Config {
         var c = Config()
         let normal = Profile(name: "Normal")
-        c.profiles = [normal, Profile(name: "Tout voir", showUngrouped: true), Profile(name: "Concentration")]
+        c.profiles = [normal, Profile(name: "Show All", showUngrouped: true), Profile(name: "Focus")]
         c.activeProfile = normal.id
         return c
     }
