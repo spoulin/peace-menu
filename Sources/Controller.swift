@@ -53,6 +53,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var baseline: [String: String] = [:]
     private(set) var changedGroups: Set<UUID> = []
     private var stateTimer: Timer?
+    private var newItemsTimer: Timer?
+    /// The icons seen at the last layout.
+    private var knownKeys: Set<String> = []
     private var checkingStates = false
     private var peekTimers: [String: Timer] = [:]
 
@@ -119,6 +122,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else if self.store.config.hideOnLaunch { self.setHidden(true) }
             self.watchTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.watchUnhideable() }
             self.stateTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.checkStates() }
+            self.newItemsTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.watchNewItems() }
+            // A new app usually adds its icon within a few seconds of launching.
+            NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+                for delay in [2.0, 5.0, 10.0] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { self?.watchNewItems() }
+                }
+            }
         }
     }
 
@@ -471,6 +481,38 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Every few seconds, reads the state of the icons in folded groups. A change puts a dot on
     /// the group's title and, if asked, brings the icon into the bar for a moment.
+    /// Notices icons that weren't there at the last layout (an app launched, or added an icon)
+    /// and lays the bar out again, so they land in their group or behind ‹ instead of wherever
+    /// macOS put them.
+    private func watchNewItems() {
+        guard AXIsProcessTrusted(), !layoutRunning, !knownKeys.isEmpty else { return }
+        let known = knownKeys, showUngrouped = showUngrouped
+        let assigned = Set(store.config.groups.flatMap { $0.items.map(\.key) })
+        layoutQueue.async { [weak self] in
+            guard let self else { return }
+            let items = self.snapshot(quick: true)
+            let new = Set(items.filter { !$0.isOurs && !$0.isFixed && !Scanner.isUnhideable($0.key) }.map(\.key)).subtracting(known)
+            guard !new.isEmpty else { return }
+            // A layout reveals the hidden icons for a moment: only worth it when a new icon is
+            // out of place. One in no group belongs between ‹‹ and ‹ (or shown, if the profile
+            // shows those); one in a group, in its group.
+            let p = Placer(items: items, known: DispatchQueue.main.sync { self.ownWindows })
+            let misplaced = new.filter { key in
+                if assigned.contains(key) { return true }
+                if showUngrouped { return true }
+                guard let f = p.frame(key), let h = p.frame(Self.hiddenKey) else { return false }
+                if f.minX >= h.maxX - 2 { return true } // right of ‹: shows
+                if let a = p.frame(Self.alwaysKey), f.maxX <= a.minX + 2 { return true } // behind ‹‹: ☮ can't show it
+                return false
+            }
+            DispatchQueue.main.async {
+                self.knownKeys.formUnion(new)
+                log("new items: \(new.sorted()), out of place: \(misplaced.sorted())")
+                if !misplaced.isEmpty { self.applyLayout(thenHide: self.isHidden) }
+            }
+        }
+    }
+
     private func checkStates() {
         let mode = store.config.changeSignal
         let folded = store.config.groups.filter { $0.collapsed && visibleGroups.contains($0.id) }
@@ -723,6 +765,18 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var anchor = Self.mainKey
         for key in desired where p.windows[key] != nil {
             if p.place(key, leftOf: anchor) { anchor = key }
+        }
+
+        DispatchQueue.main.async { self.knownKeys = Set(items.map(\.key)) }
+
+        // Icons in no group that sit between ‹ and ☮ (a new app's icon, say) go behind ‹,
+        // unless the profile shows them.
+        if !showUngrouped {
+            for it in items where !it.isOurs && !it.isFixed && !assigned.contains(it.key) && !Scanner.isUnhideable(it.key) {
+                guard let h = p.frame(Self.hiddenKey), let m = p.frame(Self.mainKey), let f = p.frame(it.key),
+                      f.minX >= h.maxX - 2, f.maxX <= m.minX + 2 else { continue }
+                _ = p.place(it.key, leftOf: Self.hiddenKey)
+            }
         }
 
         // Icons in no group that ended up behind ‹‹ come back between ‹‹ and ‹, where ☮ shows them.
