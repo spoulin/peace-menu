@@ -74,10 +74,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         enqueueCreation(key: Self.mainKey) { [unowned self] in
-            mainItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            // A fixed width: with a variable one, ☮ was sometimes clipped on the left and right
+            // after the active menu bar moved to the external display (another pixel density).
+            mainItem = NSStatusBar.system.statusItem(withLength: 30)
             mainItem.autosaveName = "PeaceMain"
             mainItem.behavior = []
             if let b = mainItem.button {
+                b.imageScaling = .scaleProportionallyDown // shrink rather than clip
+                b.imagePosition = .imageOnly
                 b.image = symbol("peacesign")
                 b.target = self
                 b.action = #selector(mainClicked(_:))
