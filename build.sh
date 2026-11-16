@@ -13,8 +13,11 @@ VERSION="${VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' 
 VERSION="${VERSION:-$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Info.plist)}"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
-# SIGN_ID, else the first "Apple Development" identity, else ad hoc
-# (ad hoc means granting Accessibility again after each rebuild).
+# SIGN_ID, else the "PeaceMenu Release Signing" certificate (the one releases use, so the
+# Accessibility permission is the same for local builds and releases), else the first
+# "Apple Development" identity, else ad hoc (granting Accessibility again after each rebuild).
+# The release certificate is self-signed, hence not "valid" for find-identity -v.
+SIGN_ID="${SIGN_ID:-$(security find-identity -p codesigning | awk '/"PeaceMenu Release Signing"/ { print $2; exit }')}"
 SIGN_ID="${SIGN_ID:-$(security find-identity -v -p codesigning | awk '/Apple Development/ { print $2; exit }')}"
 SIGN_ID="${SIGN_ID:--}"
 APP="build/PeaceMenu.app"

@@ -303,15 +303,24 @@ struct GeneralTab: View {
 
     var body: some View {
         Form {
-            Section("Hiding") {
-                Picker("Hide again after", selection: $store.config.autoHideDelay) {
+            Section("Menu bar icon") {
+                Picker("☮", selection: $store.config.menuIcon) {
+                    ForEach(MenuIcon.allCases) { Text($0.title).tag($0) }
+                }
+                Text("The colored icons are bright on a dark menu bar and darker on a light one.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Ungrouped icons") {
+                Picker("After ☮ shows them, hide again after", selection: $store.config.autoHideDelay) {
                     Text("Never").tag(0.0)
                     Text("5 seconds").tag(5.0)
                     Text("10 seconds").tag(10.0)
                     Text("30 seconds").tag(30.0)
                     Text("1 minute").tag(60.0)
                 }
-                Toggle("Hide icons at launch", isOn: $store.config.hideOnLaunch)
+                Toggle("Hide them at launch", isOn: $store.config.hideOnLaunch)
+                Text("Icons in no group sit behind ‹; a click on ☮ shows them. Groups open and fold with a click on their title, and stay as you leave them.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Folded groups") {
                 Picker("When an icon changes", selection: $store.config.changeSignal) {

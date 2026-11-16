@@ -82,7 +82,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let b = mainItem.button {
                 b.imageScaling = .scaleProportionallyDown // shrink rather than clip
                 b.imagePosition = .imageOnly
-                b.image = symbol("peacesign")
+                b.image = peaceIcon()
                 b.target = self
                 b.action = #selector(mainClicked(_:))
                 b.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -110,7 +110,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         whenItemsReady { [unowned self] in
             loadActiveProfile()
             syncSeparators()
-            store.onChange = { [weak self] in self?.syncSeparators() }
+            store.onChange = { [weak self] in
+                self?.syncSeparators()
+                if let self, !self.layoutRunning { self.mainItem.button?.image = self.peaceIcon() }
+            }
             whenItemsReady { [unowned self] in finishLaunching() }
         }
     }
@@ -372,6 +375,52 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .space:
             item.length = 10
         }
+    }
+
+    /// ☮ as chosen in Settings. The colored ones are drawn each time the bar draws them: bright
+    /// on a dark menu bar, darker on a light one, where bright yellow and cyan would fade out.
+    private func peaceIcon() -> NSImage? {
+        let style = store.config.menuIcon
+        guard style != .classic,
+              let shape = NSImage(systemSymbolName: "peacesign", accessibilityDescription: "PeaceMenu")?
+                .withSymbolConfiguration(.init(pointSize: 15, weight: style == .stripes ? .semibold : .medium)) else { return symbol("peacesign") }
+        let img = NSImage(size: shape.size, flipped: false) { r in
+            let dark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            shape.draw(in: r)
+            ctx.setBlendMode(.sourceIn)
+            if style == .stripes {
+                let hues: [CGFloat] = [0.0, 0.08, 0.15, 0.33, 0.55, 0.72, 0.85]
+                let step = r.width / 8
+                ctx.translateBy(x: r.midX, y: r.midY)
+                ctx.rotate(by: .pi / 4)
+                for i in -10..<10 {
+                    let hue = hues[(i + 21) % hues.count]
+                    ctx.setFillColor(NSColor(hue: hue, saturation: 0.9, brightness: dark ? 1 : 0.72, alpha: 1).cgColor)
+                    ctx.fill(CGRect(x: CGFloat(i) * step, y: -r.width, width: step + 0.3, height: r.width * 2))
+                }
+            } else {
+                // A rainbow turning around the center. Blue and violet are paler on a dark bar:
+                // full ones sank into the black (the bottom stem is violet).
+                let c = CGPoint(x: r.midX, y: r.midY), n = 72
+                for i in 0..<n {
+                    let hue = CGFloat(i) / CGFloat(n)
+                    let deep = hue > 0.58 && hue < 0.82
+                    let color = dark
+                        ? NSColor(hue: hue, saturation: deep ? 0.5 : 0.9, brightness: 1, alpha: 1)
+                        : NSColor(hue: hue, saturation: 0.9, brightness: 0.72, alpha: 1)
+                    ctx.setFillColor(color.cgColor)
+                    let a0 = hue * 2 * .pi, a1 = CGFloat(i + 1) / CGFloat(n) * 2 * .pi + 0.02
+                    ctx.move(to: c)
+                    ctx.addArc(center: c, radius: r.width, startAngle: a0, endAngle: a1, clockwise: false)
+                    ctx.fillPath()
+                }
+            }
+            return true
+        }
+        img.isTemplate = false
+        img.accessibilityDescription = "PeaceMenu"
+        return img
     }
 
     /// A bold chevron, as a template image so it follows the menu bar's colors.
@@ -711,7 +760,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let failed = Mover.exclusive { self.runLayout(groups: groups, visible: visible, showUngrouped: ungrouped, unhideable: present) }
                 DispatchQueue.main.async {
                     self.layoutRunning = false
-                    self.mainItem.button?.image = self.symbol("peacesign")
+                    self.mainItem.button?.image = self.peaceIcon()
                     if !failed.isEmpty { self.mainItem.button?.toolTip = "PeaceMenu — couldn't move: \(failed.joined(separator: ", "))" }
                     self.live.refresh(controller: self)
                     if self.layoutPending {

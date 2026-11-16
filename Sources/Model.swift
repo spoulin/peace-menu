@@ -64,6 +64,19 @@ enum ChangeSignal: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// How ☮ looks in the menu bar.
+enum MenuIcon: String, Codable, CaseIterable, Identifiable {
+    case classic, rainbow, stripes
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .classic: return "Classic"
+        case .rainbow: return "Rainbow"
+        case .stripes: return "70s stripes"
+        }
+    }
+}
+
 struct Profile: Codable, Identifiable, Hashable {
     var id = UUID()
     var name: String
@@ -83,6 +96,7 @@ struct Config: Codable {
     /// 1 once each profile's visibleGroups is in bar order (left to right). Before, the bar
     /// followed the order of `groups`, first group rightmost.
     var orderVersion = 1
+    var menuIcon: MenuIcon = .classic
 
     init() {}
 
@@ -95,6 +109,7 @@ struct Config: Codable {
         hideOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .hideOnLaunch) ?? true
         changeSignal = try c.decodeIfPresent(ChangeSignal.self, forKey: .changeSignal) ?? .peek
         orderVersion = try c.decodeIfPresent(Int.self, forKey: .orderVersion) ?? 0
+        menuIcon = try c.decodeIfPresent(MenuIcon.self, forKey: .menuIcon) ?? .classic
     }
 
     static var starter: Config {
