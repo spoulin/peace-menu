@@ -87,6 +87,9 @@ enum Mover {
     /// must be drawn: a drop where nothing is drawn sends the item to the far left.
     @discardableResult
     static func move(_ window: CGWindowID, leftOf anchor: CGWindowID) -> Bool {
+        // Items slide for a moment after others leave or arrive; grabbing one while it slides
+        // misses it (measured: an item still sliding 18, 7, then 3 points right).
+        settle([window, anchor])
         guard let start = frame(of: window), let dest = frame(of: anchor) else { return false }
         let grab = CGPoint(x: start.midX, y: start.midY)
         let drop = CGPoint(x: dest.minX + 2, y: dest.midY)
@@ -118,9 +121,20 @@ enum Mover {
         // Wait for the window server to show the new position.
         for _ in 0..<40 {
             usleep(15_000)
-            if let now = frame(of: window), now != start { usleep(40_000); return true }
+            if let now = frame(of: window), now != start { settle([window]); return true }
         }
         return false
+    }
+
+    /// Waits until the windows have stayed put for 45 ms (at most 0.6 s).
+    private static func settle(_ windows: [CGWindowID]) {
+        var last = windows.map(frame(of:))
+        var still = 0
+        for _ in 0..<40 {
+            usleep(15_000)
+            let now = windows.map(frame(of:))
+            if now == last { still += 1; if still >= 3 { return } } else { still = 0; last = now }
+        }
     }
 
     /// Hides the cursor on every display and detaches it from the mouse. A background app may
