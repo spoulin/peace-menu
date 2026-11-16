@@ -63,7 +63,7 @@ struct GroupsTab: View {
             .frame(width: 210)
 
             if let id = selection, store.config.groups.contains(where: { $0.id == id }) {
-                GroupDetail(store: store, live: live, groupID: id)
+                GroupDetail(store: store, live: live, groupID: id, controller: controller)
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "square.grid.2x2").font(.largeTitle).foregroundStyle(.secondary)
@@ -81,6 +81,7 @@ struct GroupDetail: View {
     @ObservedObject var store: Store
     @ObservedObject var live: LiveItemsModel
     let groupID: UUID
+    let controller: Controller
 
     private var group: Binding<MenuGroup> {
         Binding(
@@ -103,6 +104,11 @@ struct GroupDetail: View {
                         Image(systemName: group.wrappedValue.symbol)
                     }
                 }
+                Toggle("Icônes repliées", isOn: Binding(
+                    get: { group.wrappedValue.collapsed },
+                    set: { controller.setCollapsed(groupID, $0) }))
+                Text("Le séparateur reste dans la barre tant que le groupe fait partie du profil ; un clic dessus affiche ou replie les icônes du groupe.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Icônes du groupe (de droite à gauche)") {
                 if group.wrappedValue.items.isEmpty {
@@ -260,6 +266,13 @@ struct GeneralTab: View {
                     Text("1 minute").tag(60.0)
                 }
                 Toggle("Masquer les icônes au démarrage", isOn: $store.config.hideOnLaunch)
+            }
+            Section("Groupes repliés") {
+                Picker("Quand une icône change", selection: $store.config.changeSignal) {
+                    ForEach(ChangeSignal.allCases) { Text($0.title).tag($0) }
+                }
+                Text("PeaceMenu voit un changement quand l'app modifie le texte ou la largeur de son icône. macOS ne dessine pas les icônes cachées : un changement d'image seule (une pastille Slack, par exemple) passe inaperçu.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Démarrage") {
                 Toggle("Ouvrir PeaceMenu à l'ouverture de session", isOn: $launchAtLogin)

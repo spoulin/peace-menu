@@ -4,7 +4,11 @@ import ServiceManagement
 
 /// Owns PeaceMenu's items in the menu bar. From right to left:
 ///
-///     [hidden …] ‹ [ungrouped] [group 2 items] │G2 [group 1 items] │G1 ☮ [always visible] clock
+///     [hidden …] ‹ [unhideable] [ungrouped] G2│ [group 2 items] G1│ [group 1 items] ☮ ┆ [always visible] clock
+///
+/// "Unhideable" items are the ones macOS never lets an app hide, such as the purple
+/// screen-recording indicator. They come and go; PeaceMenu keeps them at the left end.
+/// ┆ ends PeaceMenu's part of the bar, before the items that are always visible.
 ///
 /// ☮ shows or hides everything left of ‹ by stretching ‹ to 10 000 points, which pushes
 /// those items off the screen. A profile says which groups sit between ☮ and ‹; applying
@@ -12,6 +16,7 @@ import ServiceManagement
 final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let mainKey = "peacemenu.main"
     static let hiddenKey = "peacemenu.hidden"
+    static let systemKey = "peacemenu.system"
     static func sepKey(_ id: UUID) -> String { "peacemenu.sep.\(id.uuidString)" }
 
     let store = Store.shared
@@ -19,6 +24,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var mainItem: NSStatusItem!
     private var hiddenItem: NSStatusItem!
+    private var systemItem: NSStatusItem!
+    /// Unhideable items present the last time the watcher looked.
+    private var unhideable: Set<String> = []
+    private var watchTimer: Timer?
     private var separators: [UUID: NSStatusItem] = [:]
 
     private(set) var isHidden = false
@@ -28,6 +37,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// What the bar shows now: the active profile, plus any group toggled from the menu.
     private(set) var visibleGroups: Set<UUID> = []
     private(set) var showUngrouped = false
+
+    /// The last state seen for each icon of a folded group, and the groups with an icon
+    /// that changed since they were folded.
+    private var baseline: [String: String] = [:]
+    private(set) var changedGroups: Set<UUID> = []
+    private var stateTimer: Timer?
+    private var checkingStates = false
+    private var peekTimers: [String: Timer] = [:]
 
     private let layoutQueue = DispatchQueue(label: "peacemenu.layout")
     private var layoutRunning = false
@@ -64,6 +81,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 b.action = #selector(hiddenClicked(_:))
             }
         }
+        enqueueCreation(key: Self.systemKey) { [unowned self] in
+            systemItem = NSStatusBar.system.statusItem(withLength: 9)
+            systemItem.autosaveName = "PeaceSystem"
+            systemItem.behavior = []
+            systemItem.button?.toolTip = "À droite : icônes toujours affichées"
+            styleSystemSeparator()
+        }
         whenItemsReady { [unowned self] in
             loadActiveProfile()
             syncSeparators()
@@ -81,7 +105,67 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             if trusted { self.applyLayout(thenHide: self.store.config.hideOnLaunch) }
             else if self.store.config.hideOnLaunch { self.setHidden(true) }
+            self.watchTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.watchUnhideable() }
+            self.stateTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.checkStates() }
         }
+    }
+
+    // MARK: Unhideable items
+
+    /// Notices unhideable items appearing or leaving. When one appears, moves it to the left
+    /// end without revealing the hidden icons.
+    private func watchUnhideable() {
+        guard AXIsProcessTrusted(), !layoutRunning else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let present = Scanner.unhideablePresent()
+            DispatchQueue.main.async {
+                guard let self, !self.layoutRunning, present != self.unhideable else { return }
+                log("unhideable items now: \(present.sorted())")
+                let appeared = !present.subtracting(self.unhideable).isEmpty
+                self.unhideable = present
+                guard appeared else { return }
+                self.layoutRunning = true
+                self.layoutQueue.async {
+                    Thread.sleep(forTimeInterval: 0.3) // let ┆ take its width
+                    let failed = self.placeUnhideable()
+                    DispatchQueue.main.async {
+                        self.layoutRunning = false
+                        if !failed.isEmpty { log("unhideable not moved: \(failed)") }
+                        if self.layoutPending { self.layoutPending = false; self.applyLayout(thenHide: self.isHidden) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// ┆ is a dotted line.
+    private func styleSystemSeparator() {
+        guard let b = systemItem?.button else { return }
+        b.image = NSImage(size: NSSize(width: 9, height: 16), flipped: false) { _ in
+            NSColor.black.setFill()
+            for y in stride(from: 1.0, to: 15.0, by: 3.0) { NSBezierPath(rect: NSRect(x: 4, y: y, width: 1, height: 1.5)).fill() }
+            return true
+        }
+        b.image?.isTemplate = true
+    }
+
+    /// Puts the unhideable items just left of the first item right of ‹. Nothing hidden is
+    /// revealed: everything involved sits right of ‹, so it's drawn.
+    private func placeUnhideable() -> [String] {
+        let present = DispatchQueue.main.sync { unhideable }
+        guard !present.isEmpty else { return [] }
+        let p = Placer(items: snapshot(quick: true), known: DispatchQueue.main.sync { ownWindows })
+        guard let sep = p.frame(Self.hiddenKey) else { return [] }
+        let skip = present.union([Self.hiddenKey])
+        guard let first = p.windows.keys.filter({ !skip.contains($0) })
+            .compactMap({ k in p.frame(k).map { (k, $0) } })
+            .filter({ $0.1.minX >= sep.maxX - 1 })
+            .min(by: { $0.1.minX < $1.1.minX })?.0 else { return [] }
+        var anchor = first
+        for key in present.sorted() where p.windows[key] != nil {
+            if p.place(key, leftOf: anchor) { anchor = key }
+        }
+        return p.failed
     }
 
     // MARK: Creating our items
@@ -215,6 +299,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     item.behavior = []
                     item.button?.target = self
                     item.button?.action = #selector(separatorClicked(_:))
+                    item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
                     item.button?.identifier = NSUserInterfaceItemIdentifier(g.id.uuidString)
                     separators[g.id] = item
                     if let current = store.config.groups.first(where: { $0.id == g.id }) { style(item, for: current) }
@@ -228,7 +313,25 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         b.title = ""
         b.attributedTitle = NSAttributedString(string: "")
         b.image = nil
-        b.toolTip = g.name
+        b.toolTip = "\(g.name) — clic : \(g.collapsed ? "afficher" : "replier") les icônes, clic droit : menu"
+        b.imagePosition = .imageLeading
+        // A name or a symbol gets an arrow that says whether the icons are shown. A line, a dot
+        // or a space becomes ▸ while the icons are folded, so something says they're there.
+        // An orange dot before the arrow says an icon of the folded group changed.
+        let arrow = g.collapsed ? "▸" : "▾"
+        let changed = g.collapsed && changedGroups.contains(g.id)
+        if changed { b.toolTip = "\(g.name) — une icône a changé. Clic : afficher les icônes" }
+        func arrowTitle(_ text: String) {
+            item.length = NSStatusItem.variableLength
+            let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+            let title = NSMutableAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
+            if changed, let r = text.range(of: arrow, options: .backwards) {
+                title.insert(NSAttributedString(string: "●", attributes: [.font: NSFont.systemFont(ofSize: 8), .foregroundColor: NSColor.systemOrange, .baselineOffset: 1]),
+                             at: NSRange(r, in: text).location)
+            }
+            b.attributedTitle = title
+        }
+        if g.collapsed && [.line, .dot, .space].contains(g.style) { arrowTitle(arrow); return }
         switch g.style {
         case .line:
             item.length = 9
@@ -242,13 +345,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.length = 12
             b.image = symbol("circle.fill", size: 5)
         case .label:
-            item.length = NSStatusItem.variableLength
-            b.attributedTitle = NSAttributedString(string: g.name, attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ])
+            arrowTitle("\(g.name) \(arrow)")
         case .symbol:
-            item.length = NSStatusItem.variableLength
+            arrowTitle(" \(arrow)")
             b.image = symbol(g.symbol, size: 12)
         case .space:
             item.length = 10
@@ -258,10 +357,18 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func separatorClicked(_ sender: NSStatusBarButton) {
         guard let raw = sender.identifier?.rawValue, let id = UUID(uuidString: raw),
               let g = store.config.groups.first(where: { $0.id == id }), let item = separators[id] else { return }
+        let e = NSApp.currentEvent
+        // A left click, or a press through Accessibility (no mouse event).
+        let plain = e?.type != .rightMouseUp && e?.modifierFlags.intersection([.control, .option]).isEmpty != false
+        if plain { setCollapsed(id, !g.collapsed); return }
         let menu = NSMenu()
         let title = NSMenuItem(title: g.name, action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
+        let fold = NSMenuItem(title: g.collapsed ? "Afficher les icônes" : "Replier les icônes", action: #selector(toggleCollapsedFromMenu(_:)), keyEquivalent: "")
+        fold.representedObject = id
+        fold.target = self
+        menu.addItem(fold)
         let hide = NSMenuItem(title: "Masquer ce groupe", action: #selector(toggleGroupFromMenu(_:)), keyEquivalent: "")
         hide.representedObject = id
         hide.target = self
@@ -271,6 +378,129 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.target = self
         menu.addItem(settings)
         showMenu(menu, on: item)
+    }
+
+    // MARK: Folding groups
+
+    @objc private func toggleCollapsedFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID, let g = store.config.groups.first(where: { $0.id == id }) else { return }
+        setCollapsed(id, !g.collapsed)
+    }
+
+    /// Shows or folds a group's icons: moves them next to its separator, or back behind ‹.
+    /// The choice is saved. The rest of the bar stays as it is; nothing hidden is revealed.
+    func setCollapsed(_ id: UUID, _ collapsed: Bool) {
+        guard let i = store.config.groups.firstIndex(where: { $0.id == id }),
+              store.config.groups[i].collapsed != collapsed else { return }
+        // Seen or folded again: what the icons show now is the new normal.
+        changedGroups.remove(id)
+        for ref in store.config.groups[i].items {
+            baseline[ref.key] = nil
+            peekTimers.removeValue(forKey: ref.key)?.invalidate()
+        }
+        store.config.groups[i].collapsed = collapsed // restyles the separator
+        let g = store.config.groups[i]
+        guard AXIsProcessTrusted(), visibleGroups.contains(id) else { return }
+        moveFolded(g)
+    }
+
+    private func moveFolded(_ g: MenuGroup) {
+        if layoutRunning || creating {
+            // Moves only once the running one is done, and only if the choice still holds.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self, let now = self.store.config.groups.first(where: { $0.id == g.id }), now.collapsed == g.collapsed else { return }
+                self.moveFolded(now)
+            }
+            return
+        }
+        layoutRunning = true
+        let id = g.id, folding = g.collapsed
+        let keys = g.items.map(\.key).filter { !Scanner.isUnhideable($0) }
+        layoutQueue.async {
+            Thread.sleep(forTimeInterval: 0.15) // let the arrow's new width settle
+            let p = Placer(items: self.snapshot(quick: true), known: DispatchQueue.main.sync { self.ownWindows })
+            if folding {
+                for key in keys where p.windows[key] != nil { p.hide(key, behind: Self.hiddenKey) }
+            } else {
+                p.show(keys, rightOf: Self.sepKey(id))
+            }
+            log("group \(g.name) \(folding ? "folded" : "shown"), failed: \(p.failed)")
+            DispatchQueue.main.async {
+                self.layoutRunning = false
+                if self.layoutPending { self.layoutPending = false; self.applyLayout(thenHide: self.isHidden) }
+            }
+        }
+    }
+
+    // MARK: Watching folded icons
+
+    /// Every few seconds, reads the state of the icons in folded groups. A change puts a dot on
+    /// the group's title and, if asked, brings the icon into the bar for a moment.
+    private func checkStates() {
+        let mode = store.config.changeSignal
+        let folded = store.config.groups.filter { $0.collapsed && visibleGroups.contains($0.id) }
+        guard mode != .off, !folded.isEmpty, AXIsProcessTrusted(), !checkingStates, !layoutRunning else { return }
+        checkingStates = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let states = Dictionary(Scanner.scan(quick: true).map { ($0.key, $0.state) }, uniquingKeysWith: { a, _ in a })
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.checkingStates = false
+                for g in folded {
+                    // The group may have been opened while the scan ran.
+                    guard self.store.config.groups.first(where: { $0.id == g.id })?.collapsed == true else { continue }
+                    for ref in g.items where !Scanner.isUnhideable(ref.key) {
+                        guard let now = states[ref.key] else { continue }
+                        defer { self.baseline[ref.key] = now }
+                        guard let before = self.baseline[ref.key], before != now else { continue }
+                        log("changed in \(g.name): \(ref.name) [\(before)] → [\(now)]")
+                        self.changedGroups.insert(g.id)
+                        if let item = self.separators[g.id] { self.style(item, for: g) }
+                        if self.store.config.changeSignal == .peek { self.peek(ref.key, in: g.id) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Brings one icon of a folded group next to its title, then puts it back behind ‹.
+    private func peek(_ key: String, in groupID: UUID) {
+        guard peekTimers[key] == nil else { return } // already showing
+        guard !layoutRunning, !creating else { return } // the dot stays; no need to insist
+        layoutRunning = true
+        layoutQueue.async {
+            let p = Placer(items: self.snapshot(quick: true), known: DispatchQueue.main.sync { self.ownWindows })
+            p.show([key], rightOf: Self.sepKey(groupID))
+            log("peek \(p.names[key] ?? key), failed: \(p.failed)")
+            DispatchQueue.main.async {
+                self.layoutRunning = false
+                if self.layoutPending { self.layoutPending = false; self.applyLayout(thenHide: self.isHidden) }
+                let delay = self.store.config.autoHideDelay > 0 ? self.store.config.autoHideDelay : 10
+                self.peekTimers[key] = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+                    self?.endPeek(key, in: groupID)
+                }
+            }
+        }
+    }
+
+    private func endPeek(_ key: String, in groupID: UUID) {
+        guard peekTimers[key] != nil else { return } // the group was opened or folded since
+        // Opened since: the icon stays where it is.
+        guard store.config.groups.first(where: { $0.id == groupID })?.collapsed == true else { peekTimers[key] = nil; return }
+        if layoutRunning || creating {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.endPeek(key, in: groupID) }
+            return
+        }
+        peekTimers[key] = nil
+        layoutRunning = true
+        layoutQueue.async {
+            let p = Placer(items: self.snapshot(quick: true), known: DispatchQueue.main.sync { self.ownWindows })
+            if p.windows[key] != nil { p.hide(key, behind: Self.hiddenKey) }
+            DispatchQueue.main.async {
+                self.layoutRunning = false
+                if self.layoutPending { self.layoutPending = false; self.applyLayout(thenHide: self.isHidden) }
+            }
+        }
     }
 
     // MARK: Menu
@@ -352,6 +582,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func ownItems() -> [LiveItem] {
         guard let mainH = NSScreen.screens.first?.frame.height else { return [] }
         var list: [(String, String, NSStatusItem)] = [(Self.mainKey, "PeaceMenu", mainItem), (Self.hiddenKey, "Séparateur caché", hiddenItem)]
+        if let systemItem { list.append((Self.systemKey, "┆ Fin de PeaceMenu", systemItem)) }
         for g in store.config.groups { if let s = separators[g.id] { list.append((Self.sepKey(g.id), "│ \(g.name)", s)) } }
         return list.compactMap { key, name, item in
             guard item.isVisible, let w = item.button?.window else { return nil }
@@ -362,10 +593,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// Every item, ours included, from any thread but the main one.
-    private func snapshot() -> [LiveItem] {
+    /// Every item, ours included, from any thread but the main one. `quick`: see Scanner.scan.
+    private func snapshot(quick: Bool = false) -> [LiveItem] {
         let ours = DispatchQueue.main.sync { ownItems() }
-        return (Scanner.scan() + ours).sorted { $0.frame.minX < $1.frame.minX }
+        return (Scanner.scan(quick: quick) + ours).sorted { $0.frame.minX < $1.frame.minX }
     }
 
     /// Rearranges the bar for the visible groups. Runs in the background; a request made
@@ -382,11 +613,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainItem.button?.image = symbol("hourglass")
 
         let groups = store.config.groups
-        let visible = visibleGroups, ungrouped = showUngrouped
+        let visible = visibleGroups, ungrouped = showUngrouped, present = unhideable
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self else { return }
             self.layoutQueue.async {
-                let failed = self.runLayout(groups: groups, visible: visible, showUngrouped: ungrouped)
+                let failed = self.runLayout(groups: groups, visible: visible, showUngrouped: ungrouped, unhideable: present)
                 DispatchQueue.main.async {
                     self.layoutRunning = false
                     self.mainItem.button?.image = self.symbol("peacesign")
@@ -404,17 +635,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Returns the names of items it couldn't move.
-    private func runLayout(groups: [MenuGroup], visible: Set<UUID>, showUngrouped: Bool) -> [String] {
+    private func runLayout(groups: [MenuGroup], visible: Set<UUID>, showUngrouped: Bool, unhideable: Set<String>) -> [String] {
         // Accessibility says whose item is whose; after that, positions come from the window
         // server, which is exact and immediate.
         Thread.sleep(forTimeInterval: 0.3)
         let items = snapshot()
-        let known = DispatchQueue.main.sync { ownWindows }
-        let windows = Mover.attachWindows(to: items, known: known)
-        func frame(_ key: String) -> CGRect? { windows[key].flatMap(Mover.frame(of:)) }
-        let names = Dictionary(items.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
+        let p = Placer(items: items, known: DispatchQueue.main.sync { ownWindows })
 
-        guard let mainFrame = frame(Self.mainKey), windows[Self.hiddenKey] != nil else {
+        guard let mainFrame = p.frame(Self.mainKey), p.windows[Self.hiddenKey] != nil else {
             log("layout: PeaceMenu's own items not found")
             return []
         }
@@ -422,54 +650,116 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Right to left, starting just left of ☮.
         var desired: [String] = []
+        let closed = Set(groups.filter(\.collapsed).map(\.id))
         for g in groups where visible.contains(g.id) {
+            // Built right to left, so the separator comes last: it ends up left of its icons,
+            // where a group's name reads like a title. A folded group keeps only its separator.
+            if !closed.contains(g.id) { desired += g.items.map(\.key).filter { !Scanner.isUnhideable($0) } }
             desired.append(Self.sepKey(g.id))
-            desired += g.items.map(\.key)
         }
         if showUngrouped {
-            desired += items.filter { !$0.isOurs && !$0.isFixed && !assigned.contains($0.key) }
-                .compactMap { it in frame(it.key).map { (it.key, $0) } }
+            desired += items.filter { !$0.isOurs && !$0.isFixed && !assigned.contains($0.key) && !Scanner.isUnhideable($0.key) }
+                .compactMap { it in p.frame(it.key).map { (it.key, $0) } }
                 .filter { $0.1.maxX <= mainFrame.minX + 1 }
                 .sorted { $0.1.minX > $1.1.minX }.map(\.0)
         }
+        desired += unhideable.sorted()
         desired.append(Self.hiddenKey)
 
-        var failed: [String] = []
-        log("layout start: \(windows.count) of \(items.count) items matched, desired: \(desired)")
-        defer { log("layout done, failed: \(failed)") }
-
-        /// The known item drawn just left of `key`.
-        func leftNeighbour(of key: String) -> String? {
-            guard let f = frame(key) else { return nil }
-            return windows.keys.filter { $0 != key }
-                .compactMap { k in frame(k).map { (k, $0) } }
-                .filter { $0.1.maxX <= f.minX + 2 }
-                .max { $0.1.maxX < $1.1.maxX }?.0
-        }
-
-        func place(_ key: String, leftOf anchorKey: String) -> Bool {
-            guard let w = windows[key], let a = windows[anchorKey] else { return false }
-            for _ in 0..<3 {
-                if leftNeighbour(of: anchorKey) == key { return true }
-                Mover.move(w, leftOf: a)
-            }
-            if leftNeighbour(of: anchorKey) == key { return true }
-            failed.append(names[key] ?? key)
-            return false
-        }
+        log("layout start: \(p.windows.count) of \(items.count) items matched, desired: \(desired)")
+        defer { log("layout done, failed: \(p.failed)") }
 
         var anchor = Self.mainKey
-        for key in desired where windows[key] != nil {
-            if place(key, leftOf: anchor) { anchor = key }
+        for key in desired where p.windows[key] != nil {
+            if p.place(key, leftOf: anchor) { anchor = key }
+        }
+
+        // ┆ just right of ☮: left of whatever item comes after ☮ (Control Center at the least).
+        if let next = p.rightNeighbour(of: Self.mainKey), next != Self.systemKey {
+            _ = p.place(Self.systemKey, leftOf: next)
         }
 
         // Items of hidden groups that sit right of ‹ (for example next to the clock) go behind it.
-        let hiddenKeys = groups.filter { !visible.contains($0.id) }.flatMap { $0.items.map(\.key) }
+        let hiddenKeys = groups.filter { !visible.contains($0.id) || closed.contains($0.id) }.flatMap { $0.items.map(\.key) }.filter { !Scanner.isUnhideable($0) }
         for key in hiddenKeys {
-            guard let sep = frame(Self.hiddenKey), let f = frame(key), f.minX > sep.minX else { continue }
-            _ = place(key, leftOf: Self.hiddenKey)
+            guard let sep = p.frame(Self.hiddenKey), let f = p.frame(key), f.minX > sep.minX else { continue }
+            p.hide(key, behind: Self.hiddenKey) // anywhere left of ‹ will do
         }
-        return failed
+        return p.failed
+    }
+}
+
+/// Moves items next to each other, checking each move against the window server.
+final class Placer {
+    let windows: [String: CGWindowID]
+    let names: [String: String]
+    private(set) var failed: [String] = []
+
+    init(items: [LiveItem], known: [String: [CGWindowID]]) {
+        windows = Mover.attachWindows(to: items, known: known)
+        names = Dictionary(items.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    func frame(_ key: String) -> CGRect? { windows[key].flatMap(Mover.frame(of:)) }
+
+    /// The known item drawn just left of `key`.
+    func leftNeighbour(of key: String) -> String? {
+        guard let f = frame(key) else { return nil }
+        return windows.keys.filter { $0 != key }
+            .compactMap { k in frame(k).map { (k, $0) } }
+            .filter { $0.1.maxX <= f.minX + 2 }
+            .max { $0.1.maxX < $1.1.maxX }?.0
+    }
+
+    /// Moves `key` behind ‹ (anywhere left of it). When ‹ is stretched its edge isn't drawn, and
+    /// a drop there sends the item to the far left: hidden all the same.
+    @discardableResult
+    func hide(_ key: String, behind hiddenKey: String) -> Bool {
+        guard let w = windows[key], let a = windows[hiddenKey] else { return false }
+        func isBehind() -> Bool {
+            guard let f = frame(key), let h = frame(hiddenKey) else { return false }
+            return f.maxX <= h.minX + 2
+        }
+        for _ in 0..<3 {
+            if isBehind() { return true }
+            Mover.move(w, leftOf: a)
+        }
+        if isBehind() { return true }
+        failed.append(names[key] ?? key)
+        return false
+    }
+
+    /// Puts `keys` just right of `sepKey`, in order (the first one ends up rightmost).
+    func show(_ keys: [String], rightOf sepKey: String) {
+        let mine = Set(keys)
+        guard let sepFrame = frame(sepKey),
+              var anchor = windows.keys.filter({ !mine.contains($0) && $0 != sepKey })
+                .compactMap({ k in frame(k).map { (k, $0) } })
+                .filter({ $0.1.minX >= sepFrame.maxX - 2 })
+                .min(by: { $0.1.minX < $1.1.minX })?.0 else { return }
+        for key in keys where windows[key] != nil {
+            if place(key, leftOf: anchor) { anchor = key }
+        }
+    }
+
+    /// The known item drawn just right of `key`.
+    func rightNeighbour(of key: String) -> String? {
+        guard let f = frame(key) else { return nil }
+        return windows.keys.filter { $0 != key }
+            .compactMap { k in frame(k).map { (k, $0) } }
+            .filter { $0.1.minX >= f.maxX - 2 }
+            .min { $0.1.minX < $1.1.minX }?.0
+    }
+
+    func place(_ key: String, leftOf anchorKey: String) -> Bool {
+        guard let w = windows[key], let a = windows[anchorKey] else { return false }
+        for _ in 0..<3 {
+            if leftNeighbour(of: anchorKey) == key { return true }
+            Mover.move(w, leftOf: a)
+        }
+        if leftNeighbour(of: anchorKey) == key { return true }
+        failed.append(names[key] ?? key)
+        return false
     }
 }
 
@@ -487,7 +777,7 @@ final class LiveItemsModel: ObservableObject {
 
     func refresh(controller: Controller) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let found = Scanner.scan().filter { !$0.isFixed }.sorted { $0.frame.minX > $1.frame.minX }
+            let found = Scanner.scan().filter { !$0.isFixed && !Scanner.isUnhideable($0.key) }.sorted { $0.frame.minX > $1.frame.minX }
             DispatchQueue.main.async { self.items = found }
         }
     }

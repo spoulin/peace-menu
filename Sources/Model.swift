@@ -31,6 +31,34 @@ struct MenuGroup: Codable, Identifiable, Hashable {
     var symbol = "square.grid.2x2"
     var style: SeparatorStyle = .line
     var items: [ItemRef] = []
+    /// Only the separator is in the bar; the icons wait behind ‹. A click on the separator
+    /// shows or folds them.
+    var collapsed = false
+}
+
+extension MenuGroup {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        symbol = try c.decodeIfPresent(String.self, forKey: .symbol) ?? "square.grid.2x2"
+        style = try c.decodeIfPresent(SeparatorStyle.self, forKey: .style) ?? .line
+        items = try c.decodeIfPresent([ItemRef].self, forKey: .items) ?? []
+        collapsed = try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
+    }
+}
+
+/// What happens when an icon of a folded group changes.
+enum ChangeSignal: String, Codable, CaseIterable, Identifiable {
+    case off, badge, peek
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .off: return "Rien"
+        case .badge: return "Pastille sur le titre du groupe"
+        case .peek: return "Pastille, et montrer l'icône un moment"
+        }
+    }
 }
 
 struct Profile: Codable, Identifiable, Hashable {
@@ -47,6 +75,7 @@ struct Config: Codable {
     /// Seconds before revealed icons hide again; 0 means never.
     var autoHideDelay: Double = 10
     var hideOnLaunch = true
+    var changeSignal: ChangeSignal = .peek
 
     init() {}
 
@@ -57,6 +86,7 @@ struct Config: Codable {
         activeProfile = try c.decodeIfPresent(UUID.self, forKey: .activeProfile)
         autoHideDelay = try c.decodeIfPresent(Double.self, forKey: .autoHideDelay) ?? 10
         hideOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .hideOnLaunch) ?? true
+        changeSignal = try c.decodeIfPresent(ChangeSignal.self, forKey: .changeSignal) ?? .peek
     }
 
     static var starter: Config {
