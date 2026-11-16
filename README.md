@@ -4,6 +4,8 @@
 
 # PeaceMenu
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/stephanepoulin)
+
 [![Download PeaceMenu for macOS](https://img.shields.io/badge/Download-PeaceMenu%20for%20macOS-245A8C?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/spoulin/peace-menu/releases/latest/download/PeaceMenu.dmg)
 
 For macOS 14 or later, on Apple silicon and Intel Macs. See [Install](#install).
@@ -105,3 +107,11 @@ To make the disk image locally (with [dmgbuild](https://github.com/dmgbuild/dmgb
 UNIVERSAL=1 NO_INSTALL=1 ./build.sh
 NAME="PeaceMenu" COLORS="1E6E78 245A8C 25307A" tools/make-dmg.sh build/PeaceMenu.app PeaceMenu.dmg
 ```
+
+## Support
+
+If PeaceMenu brings some peace to your menu bar (and your mind), you can buy me a coffee.
+
+<a href="https://buymeacoffee.com/stephanepoulin"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="40"></a>
+
+Made by [Stéphane Poulin](https://www.stephanepoulin.com).
