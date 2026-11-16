@@ -179,6 +179,22 @@ struct ProfilesTab: View {
             })
     }
 
+    private func groupToggle(_ g: MenuGroup, in p: Binding<Profile>) -> some View {
+        Toggle(isOn: Binding(
+            get: { p.wrappedValue.visibleGroups.contains(g.id) },
+            set: { on in
+                p.wrappedValue.visibleGroups.removeAll { $0 == g.id }
+                if on { p.wrappedValue.visibleGroups.append(g.id) }
+            })) { Label(g.name, systemImage: g.symbol) }
+    }
+
+    private func move(_ id: UUID, by step: Int, in p: Binding<Profile>) {
+        var list = p.wrappedValue.visibleGroups
+        guard let i = list.firstIndex(of: id), list.indices.contains(i + step) else { return }
+        list.swapAt(i, i + step)
+        p.wrappedValue.visibleGroups = list
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
@@ -215,29 +231,47 @@ struct ProfilesTab: View {
                 let p = binding(id)
                 Form {
                     Section { TextField("Nom", text: p.name) }
-                    Section("Groupes affichés") {
+                    Section {
                         if store.config.groups.isEmpty {
                             Text("Aucun groupe pour l'instant.").foregroundStyle(.secondary)
                         }
-                        ForEach(store.config.groups) { g in
-                            Toggle(isOn: Binding(
-                                get: { p.wrappedValue.visibleGroups.contains(g.id) },
-                                set: { on in
-                                    p.wrappedValue.visibleGroups.removeAll { $0 == g.id }
-                                    if on { p.wrappedValue.visibleGroups.append(g.id) }
-                                })) { Label(g.name, systemImage: g.symbol) }
+                        // Shown groups first, in their order in the bar; then the others.
+                        let shown = p.wrappedValue.visibleGroups.compactMap { id in store.config.groups.first { $0.id == id } }
+                        let others = store.config.groups.filter { !p.wrappedValue.visibleGroups.contains($0.id) }
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { i, g in
+                            HStack {
+                                groupToggle(g, in: p)
+                                Spacer()
+                                Button { move(g.id, by: -1, in: p) } label: { Image(systemName: "chevron.up") }
+                                    .disabled(i == 0).help("Plus à gauche")
+                                Button { move(g.id, by: 1, in: p) } label: { Image(systemName: "chevron.down") }
+                                    .disabled(i == shown.count - 1).help("Plus à droite")
+                            }
+                            .buttonStyle(.borderless)
                         }
+                        ForEach(others) { g in groupToggle(g, in: p) }
                         Toggle("Icônes sans groupe", isOn: p.showUngrouped)
+                    } header: {
+                        Text("Groupes affichés")
+                    } footer: {
+                        Text("De haut en bas : de gauche à droite dans la barre, le dernier juste à gauche de ☮.")
                     }
                     Section {
                         Button(id == store.activeProfile?.id ? "Réappliquer ce profil" : "Activer ce profil") {
                             controller.activateProfile(id)
                         }
                     } footer: {
-                        Text("Tout ce qui n'est pas affiché va derrière ‹ et apparaît d'un clic sur ☮.")
+                        Text("Les groupes non affichés vont derrière ‹‹ avec leurs icônes. Un clic sur ☮ ne montre que les icônes sans groupe.")
                     }
                 }
                 .formStyle(.grouped)
+                // The active profile applies its changes right away.
+                .onChange(of: p.wrappedValue.visibleGroups) { _, _ in
+                    if id == store.activeProfile?.id { controller.activateProfile(id) }
+                }
+                .onChange(of: p.wrappedValue.showUngrouped) { _, _ in
+                    if id == store.activeProfile?.id { controller.activateProfile(id) }
+                }
             } else {
                 Text("Choisis un profil.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             }

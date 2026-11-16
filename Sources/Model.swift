@@ -64,6 +64,7 @@ enum ChangeSignal: String, Codable, CaseIterable, Identifiable {
 struct Profile: Codable, Identifiable, Hashable {
     var id = UUID()
     var name: String
+    /// The groups this profile shows, from left to right in the bar.
     var visibleGroups: [UUID] = []
     var showUngrouped = false
 }
@@ -76,6 +77,9 @@ struct Config: Codable {
     var autoHideDelay: Double = 10
     var hideOnLaunch = true
     var changeSignal: ChangeSignal = .peek
+    /// 1 once each profile's visibleGroups is in bar order (left to right). Before, the bar
+    /// followed the order of `groups`, first group rightmost.
+    var orderVersion = 1
 
     init() {}
 
@@ -87,6 +91,7 @@ struct Config: Codable {
         autoHideDelay = try c.decodeIfPresent(Double.self, forKey: .autoHideDelay) ?? 10
         hideOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .hideOnLaunch) ?? true
         changeSignal = try c.decodeIfPresent(ChangeSignal.self, forKey: .changeSignal) ?? .peek
+        orderVersion = try c.decodeIfPresent(Int.self, forKey: .orderVersion) ?? 0
     }
 
     static var starter: Config {
@@ -115,8 +120,18 @@ final class Store: ObservableObject {
             .appendingPathComponent("PeaceMenu", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         url = dir.appendingPathComponent("config.json")
-        if let data = try? Data(contentsOf: url), let c = try? JSONDecoder().decode(Config.self, from: data) {
+        if let data = try? Data(contentsOf: url), var c = try? JSONDecoder().decode(Config.self, from: data) {
+            if c.orderVersion < 1 {
+                // Keep the bar as it looks: put each profile's groups in the order the bar used.
+                let leftToRight = c.groups.map(\.id).reversed()
+                for i in c.profiles.indices {
+                    let shown = Set(c.profiles[i].visibleGroups)
+                    c.profiles[i].visibleGroups = leftToRight.filter { shown.contains($0) }
+                }
+                c.orderVersion = 1
+            }
             config = c
+            save()
         } else {
             config = .starter
             save()

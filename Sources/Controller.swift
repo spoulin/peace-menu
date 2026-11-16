@@ -43,7 +43,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settingsWindow: NSWindow?
 
     /// What the bar shows now: the active profile, plus any group toggled from the menu.
-    private(set) var visibleGroups: Set<UUID> = []
+    /// The groups shown, from left to right in the bar.
+    private(set) var visibleOrder: [UUID] = []
+    var visibleGroups: Set<UUID> { Set(visibleOrder) }
     private(set) var showUngrouped = false
 
     /// The last state seen for each icon of a folded group, and the groups with an icon
@@ -261,7 +263,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func loadActiveProfile() {
         let p = store.activeProfile
-        visibleGroups = Set(p?.visibleGroups ?? store.config.groups.map(\.id))
+        let known = Set(store.config.groups.map(\.id))
+        visibleOrder = (p?.visibleGroups ?? store.config.groups.map(\.id)).filter { known.contains($0) }
         showUngrouped = p?.showUngrouped ?? false
     }
 
@@ -273,7 +276,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func toggleGroup(_ id: UUID) {
-        if visibleGroups.contains(id) { visibleGroups.remove(id) } else { visibleGroups.insert(id) }
+        // A group shown from the menu goes at the right end, next to ☮.
+        if visibleOrder.contains(id) { visibleOrder.removeAll { $0 == id } } else { visibleOrder.append(id) }
         syncSeparators()
         applyLayout(thenHide: isHidden)
     }
@@ -644,7 +648,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainItem.button?.image = symbol("hourglass")
 
         let groups = store.config.groups
-        let visible = visibleGroups, ungrouped = showUngrouped, present = unhideable
+        let visible = visibleOrder, ungrouped = showUngrouped, present = unhideable
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self else { return }
             self.layoutQueue.async {
@@ -666,7 +670,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Returns the names of items it couldn't move.
-    private func runLayout(groups: [MenuGroup], visible: Set<UUID>, showUngrouped: Bool, unhideable: Set<String>) -> [String] {
+    private func runLayout(groups: [MenuGroup], visible order: [UUID], showUngrouped: Bool, unhideable: Set<String>) -> [String] {
+        let visible = Set(order)
         // Accessibility says whose item is whose; after that, positions come from the window
         // server, which is exact and immediate.
         Thread.sleep(forTimeInterval: 0.3)
@@ -696,7 +701,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Right to left, starting just left of ☮.
         var desired: [String] = []
         let closed = Set(groups.filter(\.collapsed).map(\.id))
-        for g in groups where visible.contains(g.id) {
+        let byID = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for g in order.reversed().compactMap({ byID[$0] }) {
             // Built right to left, so the separator comes last: it ends up left of its icons,
             // where a group's name reads like a title. A folded group keeps only its separator.
             if !closed.contains(g.id) { desired += g.items.map(\.key).filter { !Scanner.isUnhideable($0) } }
