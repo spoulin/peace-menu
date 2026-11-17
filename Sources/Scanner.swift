@@ -17,6 +17,8 @@ struct LiveItem {
     /// plus its width, digits left out. macOS doesn't draw hidden items, so their image can't
     /// be read; this text is what can tell that a hidden item changed.
     var state = ""
+    /// The same text as the app gives it, for people to read (digits kept).
+    var text = ""
 
     var ref: ItemRef { ItemRef(key: key, name: name, bundleID: bundleID) }
     var icon: NSImage? { NSRunningApplication(processIdentifier: pid)?.icon }
@@ -85,7 +87,7 @@ enum Scanner {
             nowWith.insert(pid)
             let bundle = app.bundleIdentifier ?? app.localizedName ?? "pid\(app.processIdentifier)"
             let appName = app.localizedName ?? bundle
-            var found: [(String, String, CGRect, Bool, String)] = []
+            var found: [(String, String, CGRect, Bool, String, String)] = []
             var n = 0
             for k in kids {
                 guard let f = frame(k), f.width > 0, f.height > 0 else { continue }
@@ -96,16 +98,16 @@ enum Scanner {
                     let short = String(ident.dropFirst("com.apple.menuextra.".count))
                     name = systemNames[short] ?? (isUnhideable(ident) ? "Always visible (\(short))" : short.capitalized)
                 }
-                found.append((key, name, f, fixedIDs.contains(ident), state(k, width: f.width)))
+                found.append((key, name, f, fixedIDs.contains(ident), state(k, width: f.width), readable(k, besides: name)))
                 n += 1
             }
             let generic = found.filter { !$0.0.hasPrefix("com.apple.menuextra.") }.count
             var i = 0
-            for (key, name, f, fixed, state) in found {
+            for (key, name, f, fixed, state, text) in found {
                 var label = name
                 if generic > 1 && !key.hasPrefix("com.apple.menuextra.") { i += 1; label = "\(name) \(i)" }
                 out.append(LiveItem(key: key, name: label, bundleID: bundle, pid: app.processIdentifier,
-                                    frame: f, isFixed: fixed, isOurs: false, state: state))
+                                    frame: f, isFixed: fixed, isOurs: false, state: state, text: text))
             }
         }
         lock.withLock {
@@ -129,6 +131,21 @@ enum Scanner {
             .joined(separator: "|")
             .filter { !$0.isNumber }
         return "\(text)|w\(Int((width / 4).rounded()))"
+    }
+
+    /// Title, description, help and value, each once, without the item's own name.
+    static func readable(_ el: AXUIElement, besides name: String) -> String {
+        var seen: Set<String> = [name.lowercased()]
+        var parts: [String] = []
+        for attr in ["AXTitle", "AXDescription", "AXValue", "AXHelp"] {
+            guard let v = value(el, attr) else { continue }
+            let t: String
+            if let str = v as? String { t = str } else if let n = v as? NSNumber { t = n.stringValue } else { continue }
+            let clean = t.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+            guard !clean.isEmpty, seen.insert(clean.lowercased()).inserted else { continue }
+            parts.append(clean)
+        }
+        return parts.joined(separator: " — ")
     }
 
     // MARK: Accessibility helpers

@@ -296,7 +296,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let e = NSApp.currentEvent
         log("mainClicked type \(String(describing: e?.type.rawValue)) flags \(String(describing: e?.modifierFlags.rawValue)) hidden \(isHidden)")
         if e?.type == .rightMouseUp || e?.modifierFlags.contains(.control) == true || e?.modifierFlags.contains(.option) == true {
-            showMenu(buildMainMenu(), on: mainItem)
+            // What the hidden icons say is read first (a quick scan, off the main thread).
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let live = AXIsProcessTrusted() ? Scanner.scan(quick: true) : []
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.showMenu(self.buildMainMenu(live: live), on: self.mainItem)
+                }
+            }
         } else {
             if isHidden { revealedForUser = true }
             setHidden(!isHidden)
@@ -564,7 +571,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Menu
 
-    private func buildMainMenu() -> NSMenu {
+    private func buildMainMenu(live: [LiveItem] = []) -> NSMenu {
         let menu = NSMenu()
         func add(_ title: String, _ action: Selector?, _ obj: Any? = nil, key: String = "", on: Bool = false, enabled: Bool = true) {
             let it = NSMenuItem(title: title, action: action, keyEquivalent: key)
@@ -585,6 +592,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             add(p.name, #selector(profileFromMenu(_:)), p.id, on: p.id == store.activeProfile?.id)
         }
         menu.addItem(.separator())
+        addHiddenIcons(to: menu, live: live)
         add(isHidden ? "Show Hidden Icons" : "Hide Icons", #selector(toggleHidden))
         add(layoutRunning ? "Arranging…" : "Arrange Menu Bar Now", #selector(relayout), enabled: !layoutRunning)
         add("Settings…", #selector(openSettings), key: ",")
@@ -596,6 +604,82 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add("Quit PeaceMenu", #selector(quit), key: "q")
         return menu
     }
+
+    /// One submenu per group that isn't Always in this profile, Off ones included: their icons
+    /// are never drawn, so this is where to read what they say.
+    private func addHiddenIcons(to menu: NSMenu, live: [LiveItem]) {
+        guard !live.isEmpty else { return }
+        let byKey = Dictionary(live.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        var sections: [(title: String, mode: GroupMode, changed: Bool, items: [LiveItem])] = []
+        for entry in profileGroups where entry.mode != .always {
+            guard let g = store.config.groups.first(where: { $0.id == entry.id }) else { continue }
+            let items = g.items.compactMap { byKey[$0.key] }.filter { !Scanner.isUnhideable($0.key) }
+            sections.append((g.name, entry.mode, changedGroups.contains(g.id), items))
+        }
+        if ungroupedMode != .always {
+            let grouped = Set(store.config.groups.flatMap { $0.items.map(\.key) })
+            let loose = live.filter { !$0.isFixed && !$0.isOurs && !grouped.contains($0.key) && !Scanner.isUnhideable($0.key) }
+            if !loose.isEmpty { sections.append(("Icons in no group", ungroupedMode, false, loose)) }
+        }
+        guard !sections.isEmpty else { return }
+        menu.addItem(.sectionHeader(title: "Hidden Icons"))
+        for sec in sections {
+            let head = NSMenuItem(title: "\(sec.changed ? "● " : "")\(sec.title)", action: nil, keyEquivalent: "")
+            if #available(macOS 14.4, *) { head.subtitle = "\(sec.mode.title) · \(sec.items.count) icon\(sec.items.count == 1 ? "" : "s")" }
+            let sub = NSMenu()
+            if sec.items.isEmpty {
+                let none = NSMenuItem(title: "None running", action: nil, keyEquivalent: "")
+                none.isEnabled = false
+                sub.addItem(none)
+            }
+            for item in sec.items {
+                let row = NSMenuItem(title: item.name, action: #selector(hiddenIconChosen(_:)), keyEquivalent: "")
+                row.target = self
+                row.representedObject = HiddenIcon(key: item.key, name: item.name, pid: item.pid, mode: sec.mode)
+                if !item.text.isEmpty {
+                    row.toolTip = item.text
+                    if #available(macOS 14.4, *) { row.subtitle = item.text } else { row.title = "\(item.name) — \(item.text)" }
+                }
+                if let icon = item.icon?.copy() as? NSImage {
+                    icon.size = NSSize(width: 16, height: 16)
+                    row.image = icon
+                }
+                sub.addItem(row)
+            }
+            head.submenu = sub
+            menu.addItem(head)
+        }
+        menu.addItem(.separator())
+    }
+
+    /// Opens the icon's app, without moving anything: a running app gets the same "reopen"
+    /// as a click in the Dock, and most show their window or settings. The system's own icons
+    /// (Wi‑Fi, Battery…) open their System Settings pane.
+    @objc private func hiddenIconChosen(_ sender: NSMenuItem) {
+        guard let icon = sender.representedObject as? HiddenIcon else { return }
+        if icon.key.hasPrefix("com.apple.menuextra.") {
+            let short = String(icon.key.dropFirst("com.apple.menuextra.".count))
+            let pane = Self.settingsPanes[short].map { "?\($0)" } ?? ""
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:\(pane)")!)
+            return
+        }
+        guard let url = NSRunningApplication(processIdentifier: icon.pid)?.bundleURL else { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+            if let error { log("open \(icon.name): \(error.localizedDescription)") }
+        }
+    }
+
+    private static let settingsPanes: [String: String] = [
+        "wifi": "com.apple.wifi-settings-extension", "battery": "com.apple.Battery-Settings.extension",
+        "bluetooth": "com.apple.BluetoothSettings", "sound": "com.apple.Sound-Settings.extension",
+        "focusmode": "com.apple.Focus-Settings.extension", "display": "com.apple.Displays-Settings.extension",
+        "vpn": "com.apple.NetworkExtensionSettingsUI.NESettingsUIExtension",
+        "timemachine": "com.apple.Time-Machine-Settings.extension",
+        "textinput": "com.apple.Keyboard-Settings.extension",
+        "accessibility": "com.apple.Accessibility-Settings.extension",
+    ]
 
     @objc private func profileFromMenu(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? UUID { activateProfile(id) }
@@ -791,6 +875,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             p.hide(key, behind: deep)
         }
         return p.failed
+    }
+}
+
+/// A hidden icon, as a row of the ☮ menu.
+final class HiddenIcon: NSObject {
+    let key: String, name: String, pid: pid_t, mode: GroupMode
+    init(key: String, name: String, pid: pid_t, mode: GroupMode) {
+        self.key = key; self.name = name; self.pid = pid; self.mode = mode
     }
 }
 
