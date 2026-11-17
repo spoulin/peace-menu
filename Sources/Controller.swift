@@ -33,6 +33,19 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     /// Where folded and left-out icons go.
     private var deepKey: String { alwaysPlaced ? Self.alwaysKey : Self.hiddenKey }
+
+    /// The group whose separator stretches to hide the On demand zone: the rightmost On demand
+    /// group, when its separator sits right of its icons. Then ‹ waits at the left end of the
+    /// zone, and no extra space shows between the On demand and Always zones (macOS gives every
+    /// item a margin, even an empty one). Otherwise ‹ itself stretches.
+    private var stretcherGroup: UUID? {
+        guard let last = profileGroups.last(where: { $0.mode == .onDemand }),
+              let g = store.config.groups.first(where: { $0.id == last.id }), !g.titleOnLeft,
+              separators[g.id] != nil else { return nil }
+        return g.id
+    }
+    /// The item at the right end of the hidden zone.
+    private var boundaryKey: String { stretcherGroup.map(Self.sepKey) ?? Self.hiddenKey }
     /// Unhideable items present the last time the watcher looked.
     private var unhideable: Set<String> = []
     private var watchTimer: Timer?
@@ -176,8 +189,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let present = DispatchQueue.main.sync { unhideable }
         guard !present.isEmpty else { return [] }
         let p = Placer(items: snapshot(quick: true), known: DispatchQueue.main.sync { ownWindows })
-        guard let sep = p.frame(Self.hiddenKey) else { return [] }
-        let skip = present.union([Self.hiddenKey])
+        let boundary = DispatchQueue.main.sync { boundaryKey }
+        guard let sep = p.frame(boundary) else { return [] }
+        let skip = present.union([boundary, Self.hiddenKey])
         guard let first = p.windows.keys.filter({ !skip.contains($0) })
             .compactMap({ k in p.frame(k).map { (k, $0) } })
             .filter({ $0.1.minX >= sep.maxX - 1 })
@@ -251,12 +265,23 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 refreshPeaceIcon()
             }
         }
+        // Restyling the separators stretches the stretcher while hidden, and gives it back its
+        // look when shown (or when it stops being the stretcher).
+        for g in store.config.groups { if let item = separators[g.id] { style(item, for: g) } }
+        let stretcher = stretcherGroup
         if hidden {
             hiddenItem.button?.image = nil
-            hiddenItem.length = 10_000
+            hiddenItem.length = stretcher == nil ? 10_000 : 0
         } else {
-            hiddenItem.length = NSStatusItem.variableLength
-            hiddenItem.button?.image = symbol("chevron.compact.left", size: 13)
+            // With On demand groups, their separators already show where the hidden zone is: ‹ is
+            // then empty. With only icons in no group, ‹ shows a chevron.
+            if profileGroups.contains(where: { $0.mode == .onDemand }) {
+                hiddenItem.button?.image = nil
+                hiddenItem.length = 0
+            } else {
+                hiddenItem.length = NSStatusItem.variableLength
+                hiddenItem.button?.image = symbol("chevron.compact.left", size: 13)
+            }
             let delay = store.config.autoHideDelay
             if autoHide && delay > 0 {
                 autoHideTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
@@ -334,6 +359,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func style(_ item: NSStatusItem, for g: MenuGroup) {
         guard let b = item.button else { return }
+        if isHidden && !layoutRunning && g.id == stretcherGroup {
+            b.image = nil
+            b.attributedTitle = NSAttributedString(string: "")
+            item.length = 10_000
+            return
+        }
         b.title = ""
         b.attributedTitle = NSAttributedString(string: "")
         b.image = nil
@@ -473,7 +504,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// macOS put them.
     private func watchNewItems() {
         guard AXIsProcessTrusted(), !layoutRunning, !knownKeys.isEmpty else { return }
-        let known = knownKeys, ungrouped = ungroupedMode
+        let known = knownKeys, ungrouped = ungroupedMode, boundary = boundaryKey
         let assigned = Set(store.config.groups.flatMap { $0.items.map(\.key) })
         layoutQueue.async { [weak self] in
             guard let self else { return }
@@ -486,7 +517,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let p = Placer(items: items, known: DispatchQueue.main.sync { self.ownWindows })
             let misplaced = new.filter { key in
                 if assigned.contains(key) || ungrouped == .always { return true }
-                guard let f = p.frame(key), let h = p.frame(Self.hiddenKey) else { return false }
+                guard let f = p.frame(key), let h = p.frame(boundary) else { return false }
                 let behindDeep = p.frame(Self.alwaysKey).map { f.maxX <= $0.minX + 2 } ?? false
                 if ungrouped == .off { return !behindDeep }
                 return f.minX >= h.maxX - 2 || behindDeep // On demand: between ‹‹ and ‹
@@ -687,6 +718,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         let deep = DispatchQueue.main.sync { deepKey }
+        let boundary = DispatchQueue.main.sync { boundaryKey }
 
         // Each group as it reads left to right: a separator on the left comes before its icons.
         let byID = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -714,7 +746,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var strays: [String] = []
         if ungrouped == .onDemand {
             for it in loose {
-                guard let h = p.frame(Self.hiddenKey), let m = p.frame(Self.mainKey), let f = p.frame(it.key) else { continue }
+                guard let h = p.frame(boundary), let m = p.frame(Self.mainKey), let f = p.frame(it.key) else { continue }
                 let shown = f.minX >= h.maxX - 2 && f.maxX <= m.minX + 2
                 let deepHidden = deep == Self.alwaysKey && (p.frame(Self.alwaysKey).map { f.maxX <= $0.minX + 2 } ?? false)
                 if shown || deepHidden { strays.append(it.key) }
@@ -736,10 +768,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Each item is dropped just left of the same anchor, ☮ or ‹, left to right: every one
         // pushes the ones before it to the left. The anchor stays where it's drawn; a chain of
         // anchors would run under the MacBook's notch, where nothing is drawn and drops fail.
-        let rightOK = inOrder([Self.hiddenKey] + right, leftOf: Self.mainKey)
-        if !rightOK { _ = p.place(Self.hiddenKey, leftOf: Self.mainKey) }
-        if !strays.isEmpty || !inOrder(demand, leftOf: Self.hiddenKey) {
-            for key in strays + demand { _ = p.place(key, leftOf: Self.hiddenKey) }
+        // The boundary is the stretching separator (then ‹ goes first in the On demand zone), or ‹.
+        let leftZone = boundary == Self.hiddenKey ? demand : [Self.hiddenKey] + demand.filter { $0 != boundary }
+        let rightOK = inOrder([boundary] + right, leftOf: Self.mainKey)
+        if !rightOK { _ = p.place(boundary, leftOf: Self.mainKey) }
+        if !strays.isEmpty || !inOrder(leftZone, leftOf: boundary) {
+            for key in strays + leftZone { _ = p.place(key, leftOf: boundary) }
         }
         if !rightOK {
             for key in right { _ = p.place(key, leftOf: Self.mainKey) }
