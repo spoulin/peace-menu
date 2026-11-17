@@ -23,6 +23,9 @@ one profile for work, one for focus, one for the small screen of a laptop.
   no group get one of these three too. Switch profiles from the ☮ menu.
 - **Change signal.** When an icon of an On demand group changes (a VPN disconnects, for example),
   an orange dot appears on ☮, and the hidden groups can show for a moment.
+- **Hidden icons, at a glance.** Right-click ☮: Hidden Icons lists every hidden group, Off ones
+  included, with what each icon says right now (a VPN's status, the battery level). Choose one
+  to open its app.
 - **New icons.** When an app adds an icon, PeaceMenu puts it in its group, or behind the others.
 - **The purple recording indicator.** macOS never lets an app hide it; PeaceMenu keeps it just
   right of ‹, out of the way of your groups.
@@ -64,7 +67,7 @@ image and drag PeaceMenu onto Applications again, replacing the old one.
 | | |
 |---|---|
 | Click ☮ | Show or hide what the profile has On demand |
-| Right-click or ⌥-click ☮ | Profiles, groups, Settings, Check for Updates |
+| Right-click or ⌥-click ☮ | Profiles, Hidden Icons, Settings, Check for Updates |
 | Click a group's separator | The group's menu |
 | ⌘-drag an icon right of ☮ | It always stays visible |
 
