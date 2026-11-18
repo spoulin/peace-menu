@@ -647,15 +647,63 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let apps = running.filter { $0.url != nil }
         if !apps.isEmpty {
             menu.addItem(.sectionHeader(title: "Running"))
-            for app in apps {
-                menu.addItem(row(app.name, detail: app.windows >= 2 ? "\(app.windows) windows" : nil, url: app.url!, icon: app.icon))
+            let rows = apps.flatMap { app in
+                let it = row(app.name, detail: app.windows.count >= 2 ? "\(app.windows.count) windows" : nil, url: app.url!, icon: app.icon)
+                // Two windows or more: a submenu to pick one (the app itself first).
+                if app.windows.count >= 2 { it.submenu = windowMenu(app) }
+                // With ⌥ held, the row becomes Force Quit, as in the Dock.
+                let force = NSMenuItem(title: "Force Quit \(app.name)", action: #selector(forceQuitChosen(_:)), keyEquivalent: "")
+                force.target = self
+                force.representedObject = AppRow(url: app.url!, pid: app.pid)
+                force.image = it.image
+                force.keyEquivalentModifierMask = .option
+                force.isAlternate = true
+                return [it, force]
+            }
+            // Past a dozen apps, the list goes in a submenu: the ☮ menu would outgrow the screen.
+            if apps.count > Self.maxRunningRows {
+                let head = NSMenuItem(title: "\(apps.count) apps", action: nil, keyEquivalent: "")
+                head.image = symbol("square.stack", size: 13)
+                let sub = NSMenu()
+                rows.forEach(sub.addItem)
+                head.submenu = sub
+                menu.addItem(head)
+            } else {
+                rows.forEach(menu.addItem)
             }
         }
         if !badges.isEmpty || !apps.isEmpty { menu.addItem(.separator()) }
     }
 
+    private static let maxRunningRows = 12
+
+    private func windowMenu(_ app: RunningApp) -> NSMenu {
+        let sub = NSMenu()
+        let all = NSMenuItem(title: "Bring \(app.name) to Front", action: #selector(appChosen(_:)), keyEquivalent: "")
+        all.target = self
+        all.representedObject = AppRow(url: app.url!)
+        sub.addItem(all)
+        sub.addItem(.separator())
+        for w in app.windows {
+            let title = Apps.title(of: w)
+            let it = NSMenuItem(title: title.isEmpty ? "Untitled" : title, action: #selector(appChosen(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = AppRow(url: app.url!, window: w)
+            if Apps.isMinimized(w) { it.image = symbol("minus.square", size: 12) }
+            sub.addItem(it)
+        }
+        return sub
+    }
+
+    @objc private func forceQuitChosen(_ sender: NSMenuItem) {
+        guard let row = sender.representedObject as? AppRow, let pid = row.pid,
+              let app = NSRunningApplication(processIdentifier: pid) else { return }
+        log("force quit \(app.localizedName ?? "\(pid)"): \(app.forceTerminate())")
+    }
+
     @objc private func appChosen(_ sender: NSMenuItem) {
-        if let row = sender.representedObject as? AppRow { Apps.open(row.url) }
+        guard let row = sender.representedObject as? AppRow else { return }
+        if let w = row.window { Apps.open(row.url, window: w) } else { Apps.open(row.url) }
     }
 
     // MARK: Menu

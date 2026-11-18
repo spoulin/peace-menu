@@ -12,11 +12,13 @@ struct AppBadge: Equatable {
 
 /// A regular app (one with a Dock icon) that is running.
 struct RunningApp {
+    let pid: pid_t
     let name: String
     let bundleID: String?
     let url: URL?
     let icon: NSImage?
-    let windows: Int
+    /// Its standard windows, newest first.
+    let windows: [AXUIElement]
 }
 
 /// Running apps and their notification badges. macOS has no public API for another app's
@@ -47,8 +49,8 @@ enum Apps {
     static func running() -> [RunningApp] {
         NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular && $0.processIdentifier != getpid() }
-            .map { RunningApp(name: $0.localizedName ?? $0.bundleIdentifier ?? "?", bundleID: $0.bundleIdentifier,
-                              url: $0.bundleURL, icon: $0.icon, windows: standardWindowCount(of: $0.processIdentifier)) }
+            .map { RunningApp(pid: $0.processIdentifier, name: $0.localizedName ?? $0.bundleIdentifier ?? "?", bundleID: $0.bundleIdentifier,
+                              url: $0.bundleURL, icon: $0.icon, windows: standardWindows(of: $0.processIdentifier)) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
@@ -62,11 +64,23 @@ enum Apps {
         }
     }
 
-    private static func standardWindowCount(of pid: pid_t) -> Int {
+    private static func standardWindows(of pid: pid_t) -> [AXUIElement] {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.3)
         let windows = (value(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
-        return windows.filter { value($0, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole }.count
+        return windows.filter { value($0, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole }
+    }
+
+    static func title(of window: AXUIElement) -> String { value(window, kAXTitleAttribute) as? String ?? "" }
+
+    static func isMinimized(_ window: AXUIElement) -> Bool { value(window, kAXMinimizedAttribute) as? Bool ?? false }
+
+    /// Brings the app to the front with this window on top, out of the Dock if minimized.
+    static func open(_ url: URL, window: AXUIElement) {
+        if isMinimized(window) { AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
+        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        open(url)
     }
 
     private static func bundleID(for url: URL) -> String? {
@@ -90,5 +104,9 @@ enum Apps {
 /// An app, as a row of the ☮ menu.
 final class AppRow: NSObject {
     let url: URL
-    init(url: URL) { self.url = url }
+    /// One of the app's windows, for a row of its window submenu.
+    let window: AXUIElement?
+    /// The running app, for Force Quit.
+    let pid: pid_t?
+    init(url: URL, window: AXUIElement? = nil, pid: pid_t? = nil) { self.url = url; self.window = window; self.pid = pid }
 }
