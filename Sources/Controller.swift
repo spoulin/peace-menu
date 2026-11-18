@@ -235,10 +235,29 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let (key, make) = pendingCreations.removeFirst()
         let before = Set(Mover.menuBarWindows())
         make()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        // Each item gets one window per display, as the items made before it did.
+        let expected = ownWindows.values.first { !$0.isEmpty }?.count ?? NSScreen.screens.count
+        awaitWindows(of: key, notIn: before, expected: expected, started: Date())
+    }
+
+    /// Notes the windows that appeared since `before` once they're all there: when there are
+    /// `expected` of them, or when their number hasn't changed for half a second. Right after a
+    /// relaunch the window server can take over a second to add them; noting them too early
+    /// gives them to the next item instead, and the layout then can't find ☮ or ‹.
+    private func awaitWindows(of key: String, notIn before: Set<CGWindowID>, expected: Int,
+                              started: Date, last: [CGWindowID] = [], stableSince: Date = Date()) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self else { return }
-            ownWindows[key] = Mover.menuBarWindows().filter { !before.contains($0) }
-            log("windows for \(key): \(ownWindows[key] ?? [])")
+            let now = Mover.menuBarWindows().filter { !before.contains($0) }
+            let stableSince = now.count == last.count ? stableSince : Date()
+            let waited = Date().timeIntervalSince(started)
+            let settled = !now.isEmpty && (now.count >= expected || Date().timeIntervalSince(stableSince) >= 0.5)
+            guard settled || waited >= 5 else {
+                awaitWindows(of: key, notIn: before, expected: expected, started: started, last: now, stableSince: stableSince)
+                return
+            }
+            ownWindows[key] = now
+            log("windows for \(key): \(now) after \(String(format: "%.1f", waited)) s")
             creating = false
             runCreations()
         }
