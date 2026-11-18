@@ -26,6 +26,9 @@ one profile for work, one for focus, one for the small screen of a laptop.
 - **Hidden icons, at a glance.** Right-click ☮: Hidden Icons lists every hidden group, Off ones
   included, with what each icon says right now (a VPN's status, the battery level). Choose one
   to open its app.
+- **Running apps and notifications.** Right-click ☮: Notifications lists the apps with a badge
+  in the Dock (unread mail, messages), and Running every open app, with its window count. Choose
+  one to bring it to the front. A red badge on ☮ shows the total, even with the Dock hidden.
 - **New icons.** When an app adds an icon, PeaceMenu puts it in its group, or behind the others.
 - **The purple recording indicator.** macOS never lets an app hide it; PeaceMenu keeps it just
   right of ‹, out of the way of your groups.

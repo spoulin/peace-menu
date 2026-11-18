@@ -182,6 +182,8 @@ struct Config: Codable {
     /// followed the order of `groups`, first group rightmost.
     var orderVersion = 2
     var menuIcon: MenuIcon = .classic
+    /// Running apps and their notification badges, in the ☮ menu and as a red badge on ☮.
+    var showApps = true
 
     init() {}
 
@@ -195,6 +197,7 @@ struct Config: Codable {
         changeSignal = try c.decodeIfPresent(ChangeSignal.self, forKey: .changeSignal) ?? .peek
         orderVersion = try c.decodeIfPresent(Int.self, forKey: .orderVersion) ?? 0
         menuIcon = try c.decodeIfPresent(MenuIcon.self, forKey: .menuIcon) ?? .classic
+        showApps = try c.decodeIfPresent(Bool.self, forKey: .showApps) ?? true
     }
 
     static var starter: Config {

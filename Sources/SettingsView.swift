@@ -333,6 +333,11 @@ struct GeneralTab: View {
                 Text("PeaceMenu sees a change when an app changes its icon's text or width. macOS doesn't draw hidden icons, so a change of picture alone (a Slack badge, for example) goes unnoticed.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Running apps") {
+                Toggle("Show running apps and notifications", isOn: $store.config.showApps)
+                Text("Right-click ☮ to see the running apps and the ones with a notification; choose one to bring it to the front. When an app has a badge in the Dock (unread mail, for example), a red badge on ☮ shows the total.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Startup") {
                 Toggle("Open PeaceMenu at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in

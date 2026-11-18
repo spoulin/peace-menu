@@ -74,6 +74,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The icons seen at the last layout.
     private var knownKeys: Set<String> = []
     private var checkingStates = false
+    /// The Dock's notification badges, read every second.
+    private var badges: [AppBadge] = []
+    private var badgeTimer: Timer?
+    private var readingBadges = false
 
     private let layoutQueue = DispatchQueue(label: "peacemenu.layout")
     private var layoutRunning = false
@@ -146,6 +150,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.watchTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.watchUnhideable() }
             self.stateTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.checkStates() }
             self.newItemsTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.watchNewItems() }
+            self.badgeTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.readBadges() }
             // A new app usually adds its icon within a few seconds of launching.
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] _ in
                 for delay in [2.0, 5.0, 10.0] {
@@ -297,11 +302,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         log("mainClicked type \(String(describing: e?.type.rawValue)) flags \(String(describing: e?.modifierFlags.rawValue)) hidden \(isHidden)")
         if e?.type == .rightMouseUp || e?.modifierFlags.contains(.control) == true || e?.modifierFlags.contains(.option) == true {
             // What the hidden icons say is read first (a quick scan, off the main thread).
+            let showApps = store.config.showApps
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let live = AXIsProcessTrusted() ? Scanner.scan(quick: true) : []
+                let trusted = AXIsProcessTrusted()
+                let live = trusted ? Scanner.scan(quick: true) : []
+                let running = showApps ? Apps.running() : []
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.showMenu(self.buildMainMenu(live: live), on: self.mainItem)
+                    self.showMenu(self.buildMainMenu(live: live, running: running), on: self.mainItem)
                 }
             }
         } else {
@@ -419,21 +427,44 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// on a dark menu bar, darker on a light one, where bright yellow and cyan would fade out.
     private func peaceIcon() -> NSImage? {
         let base = basePeaceIcon()
-        // An icon that changed in an On demand group (hidden) shows as a dot on ☮.
-        guard !changedGroups.isEmpty, let base else { return base }
-        let img = NSImage(size: base.size, flipped: false) { r in
+        // An icon that changed in an On demand group (hidden) shows as an orange dot on ☮, and
+        // the apps' notifications as a red badge with their total.
+        let changed = !changedGroups.isEmpty
+        let total = store.config.showApps ? badges.reduce(0) { $0 + $1.count } : 0
+        guard changed || total > 0, let base else { return base }
+        // The badge sits top right, past the sign's edge, so ☮ stays readable; the orange dot
+        // then moves to the bottom right.
+        let text = NSAttributedString(string: total > 99 ? "99+" : "\(total)", attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .bold), .foregroundColor: NSColor.white])
+        let badge = total > 0 ? NSSize(width: max(10, ceil(text.size().width) + 4), height: 10) : .zero
+        let size = NSSize(width: base.size.width + (total > 0 ? badge.width * 0.6 : 0), height: max(base.size.height, 18))
+        let img = NSImage(size: size, flipped: false) { r in
+            let sign = NSRect(x: 0, y: (r.height - base.size.height) / 2, width: base.size.width, height: base.size.height)
             if base.isTemplate {
                 let dark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                base.tinted(dark ? .white : .black).draw(in: r)
+                base.tinted(dark ? .white : .black).draw(in: sign)
             } else {
-                base.draw(in: r)
+                base.draw(in: sign)
             }
-            NSColor.systemOrange.setFill()
-            NSBezierPath(ovalIn: NSRect(x: r.maxX - 6, y: r.maxY - 6, width: 6, height: 6)).fill()
+            if changed {
+                NSColor.systemOrange.setFill()
+                let y = total > 0 ? sign.minY : sign.maxY - 6
+                NSBezierPath(ovalIn: NSRect(x: sign.maxX - 6, y: y, width: 6, height: 6)).fill()
+            }
+            if total > 0 {
+                let b = NSRect(x: r.maxX - badge.width, y: r.maxY - badge.height, width: badge.width, height: badge.height)
+                NSColor.systemRed.setFill()
+                NSBezierPath(roundedRect: b, xRadius: badge.height / 2, yRadius: badge.height / 2).fill()
+                let t = text.size()
+                text.draw(at: NSPoint(x: b.midX - t.width / 2, y: b.midY - t.height / 2))
+            }
             return true
         }
         img.isTemplate = false
-        img.accessibilityDescription = "PeaceMenu — an icon changed"
+        var what: [String] = []
+        if total > 0 { what.append("\(total) notification\(total == 1 ? "" : "s")") }
+        if changed { what.append("an icon changed") }
+        img.accessibilityDescription = "PeaceMenu — \(what.joined(separator: ", "))"
         return img
     }
 
@@ -569,9 +600,67 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    // MARK: Notifications
+
+    /// Reads the Dock's badges; a change of total redraws ☮.
+    private func readBadges() {
+        guard store.config.showApps, AXIsProcessTrusted(), !readingBadges else {
+            if !store.config.showApps && !badges.isEmpty { badges = []; refreshPeaceIcon() }
+            return
+        }
+        readingBadges = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let found = Apps.badges()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.readingBadges = false
+                guard found != self.badges, self.store.config.showApps else { return }
+                log("badges: \(found.map { "\($0.bundleID) \($0.label)" })")
+                self.badges = found
+                self.refreshPeaceIcon()
+            }
+        }
+    }
+
+    /// Notifications: the apps with a badge. Running: the regular apps, with their window count
+    /// when they have two or more. Choosing one brings it to the front.
+    private func addApps(to menu: NSMenu, running: [RunningApp]) {
+        guard store.config.showApps else { return }
+        func row(_ name: String, detail: String?, url: URL, icon: NSImage?) -> NSMenuItem {
+            let it = NSMenuItem(title: detail.map { "\(name) · \($0)" } ?? name, action: #selector(appChosen(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = AppRow(url: url)
+            if let icon = icon?.copy() as? NSImage {
+                icon.size = NSSize(width: 16, height: 16)
+                it.image = icon
+            }
+            return it
+        }
+        if !badges.isEmpty {
+            menu.addItem(.sectionHeader(title: "Notifications"))
+            for b in badges {
+                let app = running.first { $0.bundleID == b.bundleID }
+                let name = app?.name ?? FileManager.default.displayName(atPath: b.url.path).replacingOccurrences(of: ".app", with: "")
+                menu.addItem(row(name, detail: b.label, url: b.url, icon: app?.icon ?? NSWorkspace.shared.icon(forFile: b.url.path)))
+            }
+        }
+        let apps = running.filter { $0.url != nil }
+        if !apps.isEmpty {
+            menu.addItem(.sectionHeader(title: "Running"))
+            for app in apps {
+                menu.addItem(row(app.name, detail: app.windows >= 2 ? "\(app.windows) windows" : nil, url: app.url!, icon: app.icon))
+            }
+        }
+        if !badges.isEmpty || !apps.isEmpty { menu.addItem(.separator()) }
+    }
+
+    @objc private func appChosen(_ sender: NSMenuItem) {
+        if let row = sender.representedObject as? AppRow { Apps.open(row.url) }
+    }
+
     // MARK: Menu
 
-    private func buildMainMenu(live: [LiveItem] = []) -> NSMenu {
+    private func buildMainMenu(live: [LiveItem] = [], running: [RunningApp] = []) -> NSMenu {
         let menu = NSMenu()
         func add(_ title: String, _ action: Selector?, _ obj: Any? = nil, key: String = "", on: Bool = false, enabled: Bool = true) {
             let it = NSMenuItem(title: title, action: action, keyEquivalent: key)
@@ -592,6 +681,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             add(p.name, #selector(profileFromMenu(_:)), p.id, on: p.id == store.activeProfile?.id)
         }
         menu.addItem(.separator())
+        addApps(to: menu, running: running)
         addHiddenIcons(to: menu, live: live)
         add(isHidden ? "Show Hidden Icons" : "Hide Icons", #selector(toggleHidden))
         add(layoutRunning ? "Arranging…" : "Arrange Menu Bar Now", #selector(relayout), enabled: !layoutRunning)
