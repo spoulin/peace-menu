@@ -340,7 +340,7 @@ struct GeneralTab: View {
             }
             Section("App ring") {
                 LabeledContent("Shortcut") { ShortcutRecorder(shortcut: $store.config.ringShortcut) }
-                Text("Hold the shortcut: the apps of the Dock show on a ring around the pointer, with their badges. Point to one and let go to bring it to the front, or open it. A quick press keeps the ring open: click an app, or press Escape.")
+                Text("Hold the shortcut: the apps of the Dock show on a ring around the pointer, with their badges, the ones you use most in the middle. Point to one and let go to bring it to the front, or open it. A quick press keeps the ring open: click an app, or press Escape.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Startup") {

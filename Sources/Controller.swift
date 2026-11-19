@@ -155,6 +155,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.stateTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.checkStates() }
             self.newItemsTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.watchNewItems() }
             self.badgeTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.readBadges() }
+            // Which apps come to the front, for the app ring's centre.
+            NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
+                guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      app.activationPolicy == .regular, let id = app.bundleIdentifier else { return }
+                Usage.record(id)
+            }
             // A new app usually adds its icon within a few seconds of launching.
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] _ in
                 for delay in [2.0, 5.0, 10.0] {

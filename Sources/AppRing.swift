@@ -138,22 +138,37 @@ final class AppRingView: NSView {
         needsDisplay = true
     }
 
-    /// The running apps first, then the ones only kept in the Dock, each in Dock order: up to
-    /// 12 on the first ring, the rest on rings further out. Every app keeps its place, so the
-    /// hand learns where it is.
+    /// The 12 most used apps on the first ring, closest to the pointer; the others further out,
+    /// the running ones first. On each ring, apps follow the Dock's order, so they keep their
+    /// places from one time to the next.
     private func layoutRings() {
-        var rest = apps.filter(\.isRunning) + apps.filter { !$0.isRunning }
-        let icon: CGFloat = 40, gap: CGFloat = 14
+        let score = Usage.scores()
+        let ranked = apps.enumerated().sorted { a, b in
+            let sa = score[a.element.bundleID] ?? 0, sb = score[b.element.bundleID] ?? 0
+            return sa != sb ? sa > sb : a.offset < b.offset
+        }
+        let centre = Set(ranked.prefix(12).map(\.element.bundleID))
+        var groups = [apps.filter { centre.contains($0.bundleID) }]
+        var rest = apps.filter { !centre.contains($0.bundleID) }
+        rest = rest.filter(\.isRunning) + rest.filter { !$0.isRunning }
+        let icon: CGFloat = 40, gap: CGFloat = 22
         rings = []
         var inner = hole
-        while !rest.isEmpty {
-            var mid = inner + icon / 2 + 10
-            if rings.isEmpty { mid = max(mid, CGFloat(min(rest.count, 12)) * (icon + gap) / (2 * .pi)) }
-            let fits = rings.isEmpty ? min(12, rest.count) : max(1, Int(2 * .pi * mid / (icon + gap)))
-            let n = min(fits, rest.count)
-            let outer = mid + icon / 2 + 12
-            rings.append(Ring(apps: Array(rest.prefix(n)), inner: inner, outer: outer, mid: mid, icon: icon))
-            rest.removeFirst(n)
+        while !groups.isEmpty || !rest.isEmpty {
+            var mid = inner + icon / 2 + 14
+            let ringApps: [DockApp]
+            if let first = groups.first {
+                groups.removeFirst()
+                ringApps = first
+                mid = max(mid, CGFloat(first.count) * (icon + gap) / (2 * .pi))
+            } else {
+                let fits = max(1, Int(2 * .pi * mid / (icon + gap)))
+                ringApps = Array(rest.prefix(fits))
+                rest.removeFirst(ringApps.count)
+            }
+            guard !ringApps.isEmpty else { continue }
+            let outer = mid + icon / 2 + 16
+            rings.append(Ring(apps: ringApps, inner: inner, outer: outer, mid: mid, icon: icon))
             inner = outer
         }
     }

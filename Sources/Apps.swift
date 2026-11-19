@@ -21,6 +21,22 @@ struct RunningApp {
     let windows: [AXUIElement]
 }
 
+/// How much each app is used: every time an app comes to the front, its score goes up by one
+/// and every score fades a little, so what's used lately counts most.
+enum Usage {
+    private static let key = "appUsage"
+
+    static func scores() -> [String: Double] {
+        UserDefaults.standard.dictionary(forKey: key) as? [String: Double] ?? [:]
+    }
+
+    static func record(_ bundleID: String) {
+        var s = scores().mapValues { $0 * 0.995 }.filter { $0.value > 0.05 }
+        s[bundleID, default: 0] += 1
+        UserDefaults.standard.set(s, forKey: key)
+    }
+}
+
 /// An app in the Dock, kept there or running.
 struct DockApp {
     let name: String
