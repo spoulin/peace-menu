@@ -104,10 +104,12 @@ final class AppSwitcher {
         if advanced { choose(view?.selected) }
     }
 
-    /// The apps used most first (Usage), then the others: running before kept, in Dock order.
+    /// The apps with a badge first, then the others; in each, the ones used most first (Usage),
+    /// then running before kept, in Dock order.
     private func order(_ apps: [DockApp]) -> [DockApp] {
         let score = Usage.scores()
         return apps.enumerated().sorted { a, b in
+            if (a.element.badge != nil) != (b.element.badge != nil) { return a.element.badge != nil }
             let sa = score[a.element.bundleID] ?? 0, sb = score[b.element.bundleID] ?? 0
             if sa != sb { return sa > sb }
             if a.element.isRunning != b.element.isRunning { return a.element.isRunning }
@@ -137,6 +139,12 @@ final class AppSwitcherView: NSView {
     private var lastTyped = Date.distantPast
     private var box: CGRect = .zero
     private var columns = 8
+    /// Where each app sits. The apps with a badge have their own rows, above a thin line.
+    private var slots: [(row: Int, col: Int)] = []
+    private var rows = 0
+    /// The first row below the line, if there is one.
+    private var restRow: Int?
+    private let divider: CGFloat = 15
 
     private let cell = CGSize(width: 96, height: 100)
     private let iconSize: CGFloat = 56
@@ -161,9 +169,15 @@ final class AppSwitcherView: NSView {
         typed = ""
         let fit = max(1, Int((visible.width - padding * 2 - 40) / cell.width))
         columns = max(1, min(8, apps.count, fit))
-        let rows = (apps.count + columns - 1) / columns
+        let badged = apps.prefix { $0.badge != nil }.count
+        let badgedRows = (badged + columns - 1) / columns
+        restRow = badged > 0 && badged < apps.count ? badgedRows : nil
+        slots = apps.indices.map { i in
+            i < badged || restRow == nil ? (i / columns, i % columns) : (badgedRows + (i - badged) / columns, (i - badged) % columns)
+        }
+        rows = (slots.last?.row ?? 0) + 1
         let size = CGSize(width: CGFloat(columns) * cell.width + padding * 2,
-                          height: CGFloat(rows) * cell.height + padding * 2 + footer)
+                          height: CGFloat(rows) * cell.height + padding * 2 + footer + (restRow == nil ? 0 : divider))
         box = CGRect(x: (visible.midX - size.width / 2).rounded(), y: (visible.midY - size.height / 2).rounded(),
                      width: size.width, height: size.height)
         needsDisplay = true
@@ -177,10 +191,22 @@ final class AppSwitcherView: NSView {
     }
 
     private func frame(of index: Int) -> CGRect {
-        let row = index / columns, col = index % columns
+        let (row, col) = slots[index]
+        let below = restRow.map { row >= $0 ? divider : 0 } ?? 0
         return CGRect(x: box.minX + padding + CGFloat(col) * cell.width,
-                      y: box.maxY - padding - CGFloat(row + 1) * cell.height,
+                      y: box.maxY - padding - CGFloat(row + 1) * cell.height - below,
                       width: cell.width, height: cell.height)
+    }
+
+    /// ↑ or ↓: the app in the same column of the next row (wrapping), or the last one of a
+    /// shorter row.
+    private func moveRow(by step: Int) {
+        guard rows > 1 else { return }
+        let (row, col) = slots[selection]
+        let target = ((row + step) % rows + rows) % rows
+        let inRow = apps.indices.filter { slots[$0].row == target }
+        if let i = inRow.first(where: { slots[$0].col == col }) ?? inRow.last { selection = i }
+        needsDisplay = true
     }
 
     private func index(at p: CGPoint) -> Int? { apps.indices.first { frame(of: $0).contains(p) } }
@@ -188,25 +214,14 @@ final class AppSwitcherView: NSView {
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {
-        let rows = (apps.count + columns - 1) / columns
         switch Int(event.keyCode) {
         case 53: onChoose?(nil)                                         // Escape
         case 36, 76: onChoose?(selected)                                // Return, Enter
         case 123: move(by: -1)                                          // ←
         case 124: move(by: 1)                                           // →
         case 48: move(by: event.modifierFlags.contains(.shift) ? -1 : 1) // Tab
-        case 125 where rows > 1:                                        // ↓, to the same column below
-            let below = selection + columns
-            selection = below < apps.count ? below : selection % columns
-            needsDisplay = true
-        case 126 where rows > 1:                                        // ↑
-            let above = selection - columns
-            if above >= 0 { selection = above } else {
-                let lastRow = (apps.count - 1) / columns
-                let up = lastRow * columns + selection
-                selection = up < apps.count ? up : up - columns
-            }
-            needsDisplay = true
+        case 125: moveRow(by: 1)                                        // ↓
+        case 126: moveRow(by: -1)                                       // ↑
         case 51:                                                        // Delete: one letter less
             if !typed.isEmpty { typed.removeLast(); find() }
         default:
@@ -264,6 +279,12 @@ final class AppSwitcherView: NSView {
         NSBezierPath(roundedRect: box, xRadius: 20, yRadius: 20).fill()
         ctx.restoreGState()
 
+        // The line under the apps with a badge.
+        if let restRow {
+            let y = box.maxY - padding - CGFloat(restRow) * cell.height - divider / 2
+            NSColor.white.withAlphaComponent(0.18).setFill()
+            NSRect(x: box.minX + padding + 8, y: y.rounded() - 0.5, width: box.width - padding * 2 - 16, height: 1).fill()
+        }
         for (i, app) in apps.enumerated() { draw(app, in: frame(of: i), selected: i == selection) }
         drawFooter()
     }

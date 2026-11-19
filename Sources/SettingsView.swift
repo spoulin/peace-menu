@@ -335,12 +335,14 @@ struct GeneralTab: View {
             }
             Section("Running apps") {
                 Toggle("Show running apps and notifications", isOn: $store.config.showApps)
+                Toggle("Show the number of notifications on ☮", isOn: $store.config.badgeOnIcon)
+                    .disabled(!store.config.showApps)
                 Text("Right-click ☮ to see the running apps and the ones with a notification; choose one to bring it to the front, or one of its windows when it has several. Hold ⌥ to force quit it. When an app has a badge in the Dock (unread mail, for example), a red badge on ☮ shows the total.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("App switcher") {
                 LabeledContent("Shortcut") { ShortcutRecorder(shortcut: $store.config.switcherShortcut) }
-                Text("Press the shortcut: the apps of the Dock show in a grid, the ones you use most first, with their badges. Move with the arrows or type the start of a name, then press Return. As with ⌘⇥, you can also keep the modifier down, press the key again to move to the next app, and let go to open it.")
+                Text("Press the shortcut: the apps of the Dock show in a grid, with their badges: the ones with a badge first, above a line, then the others; in each, the ones you use most first. Move with the arrows or type the start of a name, then press Return. As with ⌘⇥, you can also keep the modifier down, press the key again to move to the next app, and let go to open it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Startup") {

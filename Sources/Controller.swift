@@ -458,7 +458,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // An icon that changed in an On demand group (hidden) shows as an orange dot on ☮, and
         // the apps' notifications as a red badge with their total.
         let changed = !changedGroups.isEmpty
-        let total = store.config.showApps ? badges.reduce(0) { $0 + $1.count } : 0
+        let total = store.config.showApps && store.config.badgeOnIcon ? badges.reduce(0) { $0 + $1.count } : 0
         guard changed || total > 0, let base else { return base }
         // The badge sits top right, past the sign's edge, so ☮ stays readable; the orange dot
         // then moves to the bottom right.

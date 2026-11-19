@@ -29,12 +29,13 @@ one profile for work, one for focus, one for the small screen of a laptop.
 - **Running apps and notifications.** Right-click ☮: Notifications lists the apps with a badge
   in the Dock (unread mail, messages), and Running every open app (in a submenu past 12), with
   its windows when it has several. Choose one to bring it to the front; hold ⌥ to force quit it.
-  A red badge on ☮ shows the total, even with the Dock hidden.
+  A red badge on ☮ shows the total, even with the Dock hidden (a setting turns it off).
 - **App switcher.** Choose a shortcut in Settings and press it: the apps of the Dock show in a
-  grid, the ones you use most first, with their badges and a dot for the running ones. Move with
-  the arrows or type the start of a name, then press Return to bring the app to the front, or
-  open it. As with ⌘⇥, keep the modifier down and press the key again to move to the next app;
-  let go to open it.
+  grid, with their badges and a dot for the running ones. The apps with a badge come first, above
+  a thin line, then the others; in each, the ones you use most come first. Move with the arrows
+  or type the start of a name, then press Return to bring the app to the front, or open it. As
+  with ⌘⇥, keep the modifier down and press the key again to move to the next app; let go to
+  open it.
 - **New icons.** When an app adds an icon, PeaceMenu puts it in its group, or behind the others.
 - **The purple recording indicator.** macOS never lets an app hide it; PeaceMenu keeps it just
   right of ‹, out of the way of your groups.
