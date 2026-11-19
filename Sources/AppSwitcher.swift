@@ -295,11 +295,11 @@ final class AppSwitcherView: NSView {
             NSBezierPath(roundedRect: cell.insetBy(dx: 4, dy: 4), xRadius: 12, yRadius: 12).fill()
         }
         let rect = CGRect(x: cell.midX - iconSize / 2, y: cell.maxY - 10 - iconSize, width: iconSize, height: iconSize)
-        icon(for: app).draw(in: rect, from: .zero, operation: .sourceOver, fraction: app.isRunning ? 1 : 0.75)
-        // A running app has a dot under it, as in the Dock.
+        // An app that isn't running (only kept in the Dock) is greyed out.
         if app.isRunning {
-            NSColor.white.withAlphaComponent(0.85).setFill()
-            NSBezierPath(ovalIn: CGRect(x: cell.midX - 2, y: rect.minY - 7, width: 4, height: 4)).fill()
+            icon(for: app).draw(in: rect)
+        } else {
+            greyIcon(for: app).draw(in: rect, from: .zero, operation: .sourceOver, fraction: 0.6)
         }
         if let badge = app.badge { drawBadge(badge, topRight: CGPoint(x: rect.maxX + 4, y: rect.maxY + 2)) }
         let style = NSMutableParagraphStyle()
@@ -339,6 +339,22 @@ final class AppSwitcherView: NSView {
         if let cached = Self.icons[app.url.path] { return cached }
         let img = NSWorkspace.shared.icon(forFile: app.url.path)
         Self.icons[app.url.path] = img
+        return img
+    }
+
+    /// The icon in black and white.
+    private func greyIcon(for app: DockApp) -> NSImage {
+        let key = "grey:" + app.url.path
+        if let cached = Self.icons[key] { return cached }
+        let source = icon(for: app)
+        let size = NSSize(width: iconSize * 2, height: iconSize * 2)
+        guard let cg = source.cgImage(forProposedRect: nil, context: nil, hints: [.ctm: AffineTransform(scale: size.width / source.size.width)]),
+              let filter = CIFilter(name: "CIColorControls") else { return source }
+        filter.setValue(CIImage(cgImage: cg), forKey: kCIInputImageKey)
+        filter.setValue(0, forKey: kCIInputSaturationKey)
+        guard let out = filter.outputImage, let grey = CIContext().createCGImage(out, from: out.extent) else { return source }
+        let img = NSImage(cgImage: grey, size: size)
+        Self.icons[key] = img
         return img
     }
 }
