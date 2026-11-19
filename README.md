@@ -30,6 +30,9 @@ one profile for work, one for focus, one for the small screen of a laptop.
   in the Dock (unread mail, messages), and Running every open app (in a submenu past 12), with
   its windows when it has several. Choose one to bring it to the front; hold ⌥ to force quit it.
   A red badge on ☮ shows the total, even with the Dock hidden.
+- **App ring.** Choose a shortcut in Settings, then hold it: the apps of the Dock show on a ring
+  around the pointer, with their badges and a dot for the running ones. Point to one and let go
+  to bring it to the front, or open it. A quick press keeps the ring open for a click.
 - **New icons.** When an app adds an icon, PeaceMenu puts it in its group, or behind the others.
 - **The purple recording indicator.** macOS never lets an app hide it; PeaceMenu keeps it just
   right of ‹, out of the way of your groups.

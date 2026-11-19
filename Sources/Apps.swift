@@ -21,6 +21,15 @@ struct RunningApp {
     let windows: [AXUIElement]
 }
 
+/// An app in the Dock, kept there or running.
+struct DockApp {
+    let name: String
+    let bundleID: String
+    let url: URL
+    let badge: String?
+    let isRunning: Bool
+}
+
 /// Running apps and their notification badges. macOS has no public API for another app's
 /// badge, but the Dock, even hidden, exposes each one through Accessibility (AXStatusLabel).
 enum Apps {
@@ -39,6 +48,27 @@ enum Apps {
                       let url = value(item, kAXURLAttribute) as? URL,
                       let id = bundleID(for: url), !found.contains(where: { $0.bundleID == id }) else { continue }
                 found.append(AppBadge(bundleID: id, url: url, label: label))
+            }
+        }
+        return found
+    }
+
+    /// The apps in the Dock, in its order, with their badge and whether they're running.
+    /// Folders, the Trash and minimized windows are left out. Any thread but the main one.
+    static func dockApps() -> [DockApp] {
+        guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return [] }
+        let dockElement = AXUIElementCreateApplication(dock.processIdentifier)
+        AXUIElementSetMessagingTimeout(dockElement, 0.5)
+        let running = Set(NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.compactMap(\.bundleIdentifier))
+        var found: [DockApp] = []
+        for list in children(of: dockElement) where value(list, kAXRoleAttribute) as? String == kAXListRole {
+            for item in children(of: list) where value(item, kAXSubroleAttribute) as? String == "AXApplicationDockItem" {
+                guard let url = value(item, kAXURLAttribute) as? URL, let id = bundleID(for: url),
+                      !found.contains(where: { $0.bundleID == id }) else { continue }
+                let label = value(item, "AXStatusLabel") as? String
+                found.append(DockApp(name: value(item, kAXTitleAttribute) as? String ?? url.deletingPathExtension().lastPathComponent,
+                                     bundleID: id, url: url, badge: label?.isEmpty == false ? label : nil,
+                                     isRunning: running.contains(id)))
             }
         }
         return found

@@ -338,6 +338,11 @@ struct GeneralTab: View {
                 Text("Right-click ☮ to see the running apps and the ones with a notification; choose one to bring it to the front, or one of its windows when it has several. Hold ⌥ to force quit it. When an app has a badge in the Dock (unread mail, for example), a red badge on ☮ shows the total.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("App ring") {
+                LabeledContent("Shortcut") { ShortcutRecorder(shortcut: $store.config.ringShortcut) }
+                Text("Hold the shortcut: the apps of the Dock show on a ring around the pointer, with their badges. Point to one and let go to bring it to the front, or open it. A quick press keeps the ring open: click an app, or press Escape.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Startup") {
                 Toggle("Open PeaceMenu at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in

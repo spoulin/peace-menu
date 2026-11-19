@@ -130,8 +130,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         whenItemsReady { [unowned self] in
             loadActiveProfile()
             syncSeparators()
+            HotKey.shared.onPress = { AppRing.shared.press() }
+            HotKey.shared.onRelease = { AppRing.shared.release() }
+            HotKey.shared.set(store.config.ringShortcut)
             store.onChange = { [weak self] in
                 self?.syncSeparators()
+                if let self, self.store.config.ringShortcut != HotKey.shared.current { HotKey.shared.set(self.store.config.ringShortcut) }
                 if let self, !self.layoutRunning { self.mainItem.button?.image = self.peaceIcon() }
             }
             whenItemsReady { [unowned self] in finishLaunching() }

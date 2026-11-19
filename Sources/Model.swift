@@ -184,6 +184,8 @@ struct Config: Codable {
     var menuIcon: MenuIcon = .classic
     /// Running apps and their notification badges, in the ☮ menu and as a red badge on ☮.
     var showApps = true
+    /// Held down, shows the Dock's apps on a ring around the pointer. None by default.
+    var ringShortcut: Shortcut? = nil
 
     init() {}
 
@@ -198,6 +200,7 @@ struct Config: Codable {
         orderVersion = try c.decodeIfPresent(Int.self, forKey: .orderVersion) ?? 0
         menuIcon = try c.decodeIfPresent(MenuIcon.self, forKey: .menuIcon) ?? .classic
         showApps = try c.decodeIfPresent(Bool.self, forKey: .showApps) ?? true
+        ringShortcut = try c.decodeIfPresent(Shortcut.self, forKey: .ringShortcut)
     }
 
     static var starter: Config {
