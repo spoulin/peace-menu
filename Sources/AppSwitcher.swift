@@ -380,7 +380,8 @@ final class AppSwitcherView: NSView {
     }
 
     /// What was typed, or the keys to use.
-    private static let hint = "←→↑↓ move · ↩ open · type a name · ⌘Q quit · ⌥⌘Q force quit · esc close"
+    private static let hint = ["←→↑↓ move", "↩ open", "type a name", "⌘Q quit", "⌥⌘Q force quit", "esc close"]
+        .joined(separator: "\u{2003}·\u{2003}")  // em spaces around the dots
 
     private func footerLabel(_ text: String, bright: Bool = false) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [
