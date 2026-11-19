@@ -42,13 +42,12 @@ struct Shortcut: Codable, Equatable {
     }
 }
 
-/// One system-wide shortcut, with what to do when it's pressed and when it's let go (to hold it
-/// like a key). Carbon hot keys work while PeaceMenu is in the background, with no permission.
+/// One system-wide shortcut. Carbon hot keys work while PeaceMenu is in the background, with
+/// no permission.
 final class HotKey {
     static let shared = HotKey()
 
     var onPress: (() -> Void)?
-    var onRelease: (() -> Void)?
     private var ref: EventHotKeyRef?
     private var handlerInstalled = false
     private(set) var current: Shortcut?
@@ -71,13 +70,11 @@ final class HotKey {
     private func installHandler() {
         guard !handlerInstalled else { return }
         handlerInstalled = true
-        var specs = [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
-                     EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))]
-        InstallEventHandler(GetEventDispatcherTarget(), { _, event, _ in
-            let pressed = GetEventKind(event) == UInt32(kEventHotKeyPressed)
-            DispatchQueue.main.async { pressed ? HotKey.shared.onPress?() : HotKey.shared.onRelease?() }
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetEventDispatcherTarget(), { _, _, _ in
+            DispatchQueue.main.async { HotKey.shared.onPress?() }
             return noErr
-        }, 2, &specs, nil, nil)
+        }, 1, &spec, nil, nil)
     }
 }
 

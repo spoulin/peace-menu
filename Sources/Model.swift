@@ -184,8 +184,8 @@ struct Config: Codable {
     var menuIcon: MenuIcon = .classic
     /// Running apps and their notification badges, in the ☮ menu and as a red badge on ☮.
     var showApps = true
-    /// Held down, shows the Dock's apps on a ring around the pointer. None by default.
-    var ringShortcut: Shortcut? = nil
+    /// Shows the Dock's apps in a grid to pick one from the keyboard. None by default.
+    var switcherShortcut: Shortcut? = nil
 
     init() {}
 
@@ -200,8 +200,13 @@ struct Config: Codable {
         orderVersion = try c.decodeIfPresent(Int.self, forKey: .orderVersion) ?? 0
         menuIcon = try c.decodeIfPresent(MenuIcon.self, forKey: .menuIcon) ?? .classic
         showApps = try c.decodeIfPresent(Bool.self, forKey: .showApps) ?? true
-        ringShortcut = try c.decodeIfPresent(Shortcut.self, forKey: .ringShortcut)
+        // Its name while the switcher was a ring.
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        switcherShortcut = try c.decodeIfPresent(Shortcut.self, forKey: .switcherShortcut)
+            ?? legacy.decodeIfPresent(Shortcut.self, forKey: .ringShortcut)
     }
+
+    private enum LegacyKeys: String, CodingKey { case ringShortcut }
 
     static var starter: Config {
         var c = Config()

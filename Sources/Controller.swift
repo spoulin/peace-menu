@@ -130,12 +130,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         whenItemsReady { [unowned self] in
             loadActiveProfile()
             syncSeparators()
-            HotKey.shared.onPress = { AppRing.shared.press() }
-            HotKey.shared.onRelease = { AppRing.shared.release() }
-            HotKey.shared.set(store.config.ringShortcut)
+            HotKey.shared.onPress = { [unowned self] in AppSwitcher.shared.press(store.config.switcherShortcut) }
+            HotKey.shared.set(store.config.switcherShortcut)
             store.onChange = { [weak self] in
                 self?.syncSeparators()
-                if let self, self.store.config.ringShortcut != HotKey.shared.current { HotKey.shared.set(self.store.config.ringShortcut) }
+                if let self, self.store.config.switcherShortcut != HotKey.shared.current { HotKey.shared.set(self.store.config.switcherShortcut) }
                 if let self, !self.layoutRunning { self.mainItem.button?.image = self.peaceIcon() }
             }
             whenItemsReady { [unowned self] in finishLaunching() }
@@ -155,7 +154,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.stateTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.checkStates() }
             self.newItemsTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.watchNewItems() }
             self.badgeTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.readBadges() }
-            // Which apps come to the front, for the app ring's centre.
+            // Which apps come to the front, for the order of the app switcher.
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
                 guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       app.activationPolicy == .regular, let id = app.bundleIdentifier else { return }
