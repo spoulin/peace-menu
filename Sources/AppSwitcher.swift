@@ -6,6 +6,7 @@ import AppKit
 /// Like ⌘⇥: keep the shortcut's modifier down and press its key again to move to the next app;
 /// letting go of the modifier then opens it. A single press leaves the grid open for the arrows.
 /// Escape, a click outside or the shortcut's key after letting go of the modifier close it.
+/// ⌘Q quits the selected app and ⌥⌘Q forces it to quit, as in ⌘⇥; the grid stays open.
 final class AppSwitcher {
     static let shared = AppSwitcher()
 
@@ -18,6 +19,13 @@ final class AppSwitcher {
     private var advanced = false
     private var modifierTimer: Timer?
     var isOpen: Bool { panel?.isVisible == true }
+
+    private init() {
+        // An app quit (from the grid or elsewhere) while it's open: the grid follows.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.reload()
+        }
+    }
 
     /// The shortcut was pressed: opens the grid; with it open and the modifier still held, moves
     /// to the next app; otherwise closes it.
@@ -35,6 +43,11 @@ final class AppSwitcher {
         opening = true
         heldModifiers = shortcut?.flags ?? []
         advanced = false
+        loadApps { self.show($0) }
+    }
+
+    /// The Dock's apps, read off the main thread.
+    private func loadApps(_ then: @escaping ([DockApp]) -> Void) {
         let trusted = AXIsProcessTrusted()
         DispatchQueue.global(qos: .userInteractive).async {
             var apps = trusted ? Apps.dockApps() : []
@@ -45,7 +58,29 @@ final class AppSwitcher {
                     return DockApp(name: a.name, bundleID: a.bundleID ?? url.path, url: url, badge: nil, isRunning: true)
                 }
             }
-            DispatchQueue.main.async { self.show(apps) }
+            DispatchQueue.main.async { then(apps) }
+        }
+    }
+
+    /// Reads the apps again, for an app that quit: it leaves the grid, or turns grey if it's
+    /// kept in the Dock. The selection stays in place.
+    private func reload() {
+        guard isOpen else { return }
+        // The Dock takes a moment to drop the app.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            self.loadApps { apps in
+                guard self.isOpen, !apps.isEmpty else { return }
+                self.view?.reload(self.order(apps))
+            }
+        }
+    }
+
+    private func quit(_ app: DockApp?, force: Bool) {
+        let running = app.map { NSRunningApplication.runningApplications(withBundleIdentifier: $0.bundleID) } ?? []
+        guard !running.isEmpty else { NSSound.beep(); return }
+        for r in running {
+            let done = force ? r.forceTerminate() : r.terminate()
+            log("\(force ? "force quit" : "quit") \(r.localizedName ?? app?.name ?? "?"): \(done)")
         }
     }
 
@@ -76,6 +111,7 @@ final class AppSwitcher {
             let v = AppSwitcherView(frame: NSRect(origin: .zero, size: screen.frame.size))
             v.autoresizingMask = [.width, .height]
             v.onChoose = { [weak self] app in self?.choose(app) }
+            v.onQuit = { [weak self] app, force in self?.quit(app, force: force) }
             p.contentView = v
             p.onResignKey = { [weak self] in self?.close() }
             p.onFlagsChanged = { [weak self] flags in self?.checkModifiers(flags) }
@@ -132,6 +168,8 @@ final class SwitcherPanel: NSPanel {
 
 final class AppSwitcherView: NSView {
     var onChoose: ((DockApp?) -> Void)?
+    var onQuit: ((DockApp?, Bool) -> Void)?
+    private var visible: CGRect = .zero
     private var apps: [DockApp] = []
     private var selection = 0
     var selected: DockApp? { apps.indices.contains(selection) ? apps[selection] : nil }
@@ -165,8 +203,22 @@ final class AppSwitcherView: NSView {
     /// Centred in `visible`, the first app that isn't the front one selected (as in ⌘⇥).
     func show(_ apps: [DockApp], front: String?, within visible: CGRect) {
         self.apps = apps
+        self.visible = visible
         selection = apps.firstIndex { $0.bundleID != front } ?? 0
         typed = ""
+        layOut()
+    }
+
+    /// New apps for the same grid: the selected app stays selected; if it's gone, the app that
+    /// took its place is.
+    func reload(_ apps: [DockApp]) {
+        let id = selected?.bundleID
+        self.apps = apps
+        selection = apps.firstIndex { $0.bundleID == id } ?? min(selection, apps.count - 1)
+        layOut()
+    }
+
+    private func layOut() {
         let fit = max(1, Int((visible.width - padding * 2 - 40) / cell.width))
         columns = max(1, min(8, apps.count, fit))
         let badged = apps.prefix { $0.badge != nil }.count
@@ -176,7 +228,8 @@ final class AppSwitcherView: NSView {
             i < badged || restRow == nil ? (i / columns, i % columns) : (badgedRows + (i - badged) / columns, (i - badged) % columns)
         }
         rows = (slots.last?.row ?? 0) + 1
-        let size = CGSize(width: CGFloat(columns) * cell.width + padding * 2,
+        // Wide enough for the keys at the bottom.
+        let size = CGSize(width: max(CGFloat(columns) * cell.width, footerLabel(Self.hint).size().width) + padding * 2,
                           height: CGFloat(rows) * cell.height + padding * 2 + footer + (restRow == nil ? 0 : divider))
         box = CGRect(x: (visible.midX - size.width / 2).rounded(), y: (visible.midY - size.height / 2).rounded(),
                      width: size.width, height: size.height)
@@ -215,6 +268,8 @@ final class AppSwitcherView: NSView {
 
     override func keyDown(with event: NSEvent) {
         switch Int(event.keyCode) {
+        case 12 where event.modifierFlags.contains(.command):           // ⌘Q quits, ⌥⌘Q forces
+            onQuit?(selected, event.modifierFlags.contains(.option))
         case 53: onChoose?(nil)                                         // Escape
         case 36, 76: onChoose?(selected)                                // Return, Enter
         case 123: move(by: -1)                                          // ←
@@ -325,12 +380,17 @@ final class AppSwitcherView: NSView {
     }
 
     /// What was typed, or the keys to use.
-    private func drawFooter() {
-        let text = typed.isEmpty ? "Arrows to move · Return to open · type a name · Esc to close" : "“\(typed)”"
-        let label = NSAttributedString(string: text, attributes: [
+    private static let hint = "Arrows to move · Return to open · type a name · ⌘Q quit · ⌥⌘Q force quit · Esc to close"
+
+    private func footerLabel(_ text: String, bright: Bool = false) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.white.withAlphaComponent(typed.isEmpty ? 0.5 : 0.9),
+            .foregroundColor: NSColor.white.withAlphaComponent(bright ? 0.9 : 0.5),
         ])
+    }
+
+    private func drawFooter() {
+        let label = typed.isEmpty ? footerLabel(Self.hint) : footerLabel("“\(typed)”", bright: true)
         let s = label.size()
         label.draw(at: CGPoint(x: box.midX - s.width / 2, y: box.minY + padding - 4))
     }
