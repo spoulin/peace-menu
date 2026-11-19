@@ -130,7 +130,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         whenItemsReady { [unowned self] in
             loadActiveProfile()
             syncSeparators()
-            HotKey.shared.onPress = { [unowned self] in AppSwitcher.shared.press(store.config.switcherShortcut) }
+            HotKey.shared.onPress = { [unowned self] in AppSwitcher.shared.press(store.config.switcherShortcut, on: store.config.switcherScreens) }
             HotKey.shared.set(store.config.switcherShortcut)
             store.onChange = { [weak self] in
                 self?.syncSeparators()

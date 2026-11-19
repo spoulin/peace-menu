@@ -7,20 +7,29 @@ import AppKit
 /// letting go of the modifier then opens it. A single press leaves the grid open for the arrows.
 /// Escape, a click outside or the shortcut's key after letting go of the modifier close it.
 /// ⌘Q quits the selected app and ⌥⌘Q forces it to quit, as in ⌘⇥; the grid stays open.
+///
+/// On several screens, each shows the same grid: the panel on the screen with the pointer takes
+/// the keyboard, the others follow it, and the pointer works in all of them.
 final class AppSwitcher {
     static let shared = AppSwitcher()
 
-    private var panel: SwitcherPanel?
-    private var view: AppSwitcherView?
+    private let state = SwitcherState()
+    /// One per screen, kept for the next time.
+    private var panels: [SwitcherPanel] = []
+    /// The ones showing now; `keyPanel` is one of them.
+    private var shown: [SwitcherPanel] = []
+    private var keyPanel: SwitcherPanel?
+    private var screens: SwitcherScreens = .mouse
     private var opening = false
     /// The shortcut's modifiers, while they are still held from the press that opened the grid.
     private var heldModifiers: NSEvent.ModifierFlags = []
     /// The shortcut's key was pressed again while they were held: letting go chooses.
     private var advanced = false
     private var modifierTimer: Timer?
-    var isOpen: Bool { panel?.isVisible == true }
+    var isOpen: Bool { keyPanel?.isVisible == true }
 
     private init() {
+        state.onChange = { [weak self] in self?.shown.forEach { $0.contentView?.needsDisplay = true } }
         // An app quit (from the grid or elsewhere) while it's open: the grid follows.
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             self?.reload()
@@ -29,11 +38,11 @@ final class AppSwitcher {
 
     /// The shortcut was pressed: opens the grid; with it open and the modifier still held, moves
     /// to the next app; otherwise closes it.
-    func press(_ shortcut: Shortcut?) {
+    func press(_ shortcut: Shortcut?, on screens: SwitcherScreens) {
         if isOpen {
             if !heldModifiers.isEmpty {
                 advanced = true
-                view?.move(by: 1)
+                state.move(by: 1)
             } else {
                 close()
             }
@@ -43,6 +52,7 @@ final class AppSwitcher {
         opening = true
         heldModifiers = shortcut?.flags ?? []
         advanced = false
+        self.screens = screens
         loadApps { self.show($0) }
     }
 
@@ -70,7 +80,8 @@ final class AppSwitcher {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             self.loadApps { apps in
                 guard self.isOpen, !apps.isEmpty else { return }
-                self.view?.reload(self.order(apps))
+                self.state.reload(self.order(apps))
+                self.views.forEach { $0.layOut() }
             }
         }
     }
@@ -88,8 +99,13 @@ final class AppSwitcher {
         modifierTimer?.invalidate()
         modifierTimer = nil
         heldModifiers = []
-        panel?.orderOut(nil)
+        let panels = shown
+        shown = []
+        keyPanel = nil
+        panels.forEach { $0.orderOut(nil) }
     }
+
+    private var views: [AppSwitcherView] { shown.compactMap { $0.contentView as? AppSwitcherView } }
 
     private func choose(_ app: DockApp?) {
         close()
@@ -100,35 +116,54 @@ final class AppSwitcher {
         opening = false
         guard !apps.isEmpty else { NSSound.beep(); return }
         let mouse = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main else { return }
-        if panel == nil {
-            let p = SwitcherPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            p.level = .popUpMenu
-            p.isOpaque = false
-            p.backgroundColor = .clear
-            p.hasShadow = false
-            p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
-            let v = AppSwitcherView(frame: NSRect(origin: .zero, size: screen.frame.size))
-            v.autoresizingMask = [.width, .height]
-            v.onChoose = { [weak self] app in self?.choose(app) }
-            v.onQuit = { [weak self] app, force in self?.quit(app, force: force) }
-            p.contentView = v
-            p.onResignKey = { [weak self] in self?.close() }
-            p.onFlagsChanged = { [weak self] flags in self?.checkModifiers(flags) }
-            panel = p
-            view = v
+        let mouseScreen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        let targets: [NSScreen]
+        switch screens {
+        case .mouse: targets = mouseScreen.map { [$0] } ?? []
+        // The first screen is the one with the menu bar in System Settings › Displays.
+        case .main: targets = Array(NSScreen.screens.prefix(1))
+        case .all: targets = NSScreen.screens
         }
-        guard let panel, let view else { return }
-        panel.setFrame(screen.frame, display: false)
-        view.show(order(apps), front: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-                  within: screen.visibleFrame.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY))
+        guard !targets.isEmpty else { return }
+        while panels.count < targets.count { panels.append(makePanel()) }
+        shown = Array(panels.prefix(targets.count))
+        // The keyboard goes to the screen with the pointer, if the grid is there.
+        let keyIndex = targets.firstIndex { $0 == mouseScreen } ?? 0
+        state.show(order(apps), front: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        for (i, (panel, screen)) in zip(shown, targets).enumerated() {
+            panel.takesKeyboard = i == keyIndex
+            panel.setFrame(screen.frame, display: false)
+            (panel.contentView as? AppSwitcherView)?.show(within: screen.visibleFrame.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY))
+            if i != keyIndex { panel.orderFrontRegardless() }
+        }
+        let panel = shown[keyIndex]
+        keyPanel = panel
         // Key, so the arrows reach it; a non-activating panel leaves the front app active.
         panel.makeKeyAndOrderFront(nil)
-        panel.makeFirstResponder(view)
+        panel.makeFirstResponder(panel.contentView)
         // Letting go of the modifier: there is no hot key event for it, so watch for it.
         if !heldModifiers.isEmpty {
             modifierTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in self?.checkModifiers() }
         }
+    }
+
+    private func makePanel() -> SwitcherPanel {
+        let p = SwitcherPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        p.level = .popUpMenu
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        let v = AppSwitcherView(state: state)
+        v.autoresizingMask = [.width, .height]
+        v.onChoose = { [weak self] app in self?.choose(app) }
+        v.onQuit = { [weak self] app, force in self?.quit(app, force: force) }
+        p.contentView = v
+        // Only the panel with the keyboard closes the grid when it loses it; the others can't
+        // take it, so a click in them leaves it where it is.
+        p.onResignKey = { [weak self, weak p] in if p === self?.keyPanel { self?.close() } }
+        p.onFlagsChanged = { [weak self] flags in self?.checkModifiers(flags) }
+        return p
     }
 
     /// From the panel's flagsChanged, or polled: the modifiers held now.
@@ -137,7 +172,7 @@ final class AppSwitcher {
         heldModifiers = []
         modifierTimer?.invalidate()
         modifierTimer = nil
-        if advanced { choose(view?.selected) }
+        if advanced { choose(state.selected) }
     }
 
     /// The apps with a badge first, then the others; in each, the ones used most first (Usage),
@@ -158,7 +193,9 @@ final class AppSwitcher {
 final class SwitcherPanel: NSPanel {
     var onResignKey: (() -> Void)?
     var onFlagsChanged: ((NSEvent.ModifierFlags) -> Void)?
-    override var canBecomeKey: Bool { true }
+    /// False for the copies of the grid on the other screens.
+    var takesKeyboard = true
+    override var canBecomeKey: Bool { takesKeyboard }
     override func flagsChanged(with event: NSEvent) { onFlagsChanged?(event.modifierFlags) }
     override func resignKey() {
         super.resignKey()
@@ -166,15 +203,54 @@ final class SwitcherPanel: NSPanel {
     }
 }
 
+/// What every screen's grid shows: the apps, the selection and what was typed.
+final class SwitcherState {
+    private(set) var apps: [DockApp] = []
+    var selection = 0 { didSet { if selection != oldValue { onChange?() } } }
+    var selected: DockApp? { apps.indices.contains(selection) ? apps[selection] : nil }
+    var typed = "" { didSet { if typed != oldValue { onChange?() } } }
+    var lastTyped = Date.distantPast
+    /// Redraws the grids.
+    var onChange: (() -> Void)?
+
+    /// The first app that isn't the front one selected (as in ⌘⇥).
+    func show(_ apps: [DockApp], front: String?) {
+        self.apps = apps
+        selection = apps.firstIndex { $0.bundleID != front } ?? 0
+        typed = ""
+    }
+
+    /// New apps for the same grid: the selected app stays selected; if it's gone, the app that
+    /// took its place is.
+    func reload(_ apps: [DockApp]) {
+        let id = selected?.bundleID
+        self.apps = apps
+        selection = apps.firstIndex { $0.bundleID == id } ?? min(selection, apps.count - 1)
+    }
+
+    /// Moves the selection along the grid, wrapping at the ends.
+    func move(by step: Int) {
+        guard !apps.isEmpty else { return }
+        selection = ((selection + step) % apps.count + apps.count) % apps.count
+    }
+}
+
+/// One screen's grid, laid out for that screen.
 final class AppSwitcherView: NSView {
     var onChoose: ((DockApp?) -> Void)?
     var onQuit: ((DockApp?, Bool) -> Void)?
+    private let state: SwitcherState
     private var visible: CGRect = .zero
-    private var apps: [DockApp] = []
-    private var selection = 0
-    var selected: DockApp? { apps.indices.contains(selection) ? apps[selection] : nil }
-    private var typed = ""
-    private var lastTyped = Date.distantPast
+    private var apps: [DockApp] { state.apps }
+    private var selection: Int {
+        get { state.selection }
+        set { state.selection = newValue }
+    }
+    private var selected: DockApp? { state.selected }
+    private var typed: String {
+        get { state.typed }
+        set { state.typed = newValue }
+    }
     private var box: CGRect = .zero
     private var columns = 8
     /// Where each app sits. The apps with a badge have their own rows, above a thin line.
@@ -190,6 +266,13 @@ final class AppSwitcherView: NSView {
     private let footer: CGFloat = 26
     private static var icons: [String: NSImage] = [:]
 
+    init(state: SwitcherState) {
+        self.state = state
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
     override var isFlipped: Bool { false }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -200,25 +283,14 @@ final class AppSwitcherView: NSView {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
     }
 
-    /// Centred in `visible`, the first app that isn't the front one selected (as in ⌘⇥).
-    func show(_ apps: [DockApp], front: String?, within visible: CGRect) {
-        self.apps = apps
+    /// Centred in `visible`.
+    func show(within visible: CGRect) {
         self.visible = visible
-        selection = apps.firstIndex { $0.bundleID != front } ?? 0
-        typed = ""
         layOut()
     }
 
-    /// New apps for the same grid: the selected app stays selected; if it's gone, the app that
-    /// took its place is.
-    func reload(_ apps: [DockApp]) {
-        let id = selected?.bundleID
-        self.apps = apps
-        selection = apps.firstIndex { $0.bundleID == id } ?? min(selection, apps.count - 1)
-        layOut()
-    }
-
-    private func layOut() {
+    /// After the apps changed.
+    func layOut() {
         let fit = max(1, Int((visible.width - padding * 2 - 40) / cell.width))
         columns = max(1, min(8, apps.count, fit))
         let badged = apps.prefix { $0.badge != nil }.count
@@ -233,13 +305,6 @@ final class AppSwitcherView: NSView {
                           height: CGFloat(rows) * cell.height + padding * 2 + footer + (restRow == nil ? 0 : divider))
         box = CGRect(x: (visible.midX - size.width / 2).rounded(), y: (visible.midY - size.height / 2).rounded(),
                      width: size.width, height: size.height)
-        needsDisplay = true
-    }
-
-    /// Moves the selection along the grid, wrapping at the ends.
-    func move(by step: Int) {
-        guard !apps.isEmpty else { return }
-        selection = ((selection + step) % apps.count + apps.count) % apps.count
         needsDisplay = true
     }
 
@@ -259,7 +324,6 @@ final class AppSwitcherView: NSView {
         let target = ((row + step) % rows + rows) % rows
         let inRow = apps.indices.filter { slots[$0].row == target }
         if let i = inRow.first(where: { slots[$0].col == col }) ?? inRow.last { selection = i }
-        needsDisplay = true
     }
 
     private func index(at p: CGPoint) -> Int? { apps.indices.first { frame(of: $0).contains(p) } }
@@ -272,9 +336,9 @@ final class AppSwitcherView: NSView {
             onQuit?(selected, event.modifierFlags.contains(.option))
         case 53: onChoose?(nil)                                         // Escape
         case 36, 76: onChoose?(selected)                                // Return, Enter
-        case 123: move(by: -1)                                          // ←
-        case 124: move(by: 1)                                           // →
-        case 48: move(by: event.modifierFlags.contains(.shift) ? -1 : 1) // Tab
+        case 123: state.move(by: -1)                                    // ←
+        case 124: state.move(by: 1)                                     // →
+        case 48: state.move(by: event.modifierFlags.contains(.shift) ? -1 : 1) // Tab
         case 125: moveRow(by: 1)                                        // ↓
         case 126: moveRow(by: -1)                                       // ↑
         case 51:                                                        // Delete: one letter less
@@ -287,8 +351,8 @@ final class AppSwitcherView: NSView {
                 return
             }
             // Letters typed within a second add up, as in Finder.
-            if Date().timeIntervalSince(lastTyped) > 1 { typed = "" }
-            lastTyped = Date()
+            if Date().timeIntervalSince(state.lastTyped) > 1 { typed = "" }
+            state.lastTyped = Date()
             typed += s
             find()
         }
@@ -296,7 +360,6 @@ final class AppSwitcherView: NSView {
 
     /// Selects the first app whose name starts with what was typed, else one that contains it.
     private func find() {
-        defer { needsDisplay = true }
         guard !typed.isEmpty else { return }
         let opts: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
         if let i = apps.firstIndex(where: { $0.name.range(of: typed, options: opts.union(.anchored)) != nil })
@@ -310,10 +373,7 @@ final class AppSwitcherView: NSView {
     // MARK: Pointer
 
     override func mouseMoved(with event: NSEvent) {
-        if let i = index(at: convert(event.locationInWindow, from: nil)), i != selection {
-            selection = i
-            needsDisplay = true
-        }
+        if let i = index(at: convert(event.locationInWindow, from: nil)) { selection = i }
     }
 
     override func mouseDown(with event: NSEvent) {

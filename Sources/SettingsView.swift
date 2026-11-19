@@ -342,6 +342,9 @@ struct GeneralTab: View {
             }
             Section("App switcher") {
                 LabeledContent("Shortcut") { ShortcutRecorder(shortcut: $store.config.switcherShortcut) }
+                Picker("Show on", selection: $store.config.switcherScreens) {
+                    ForEach(SwitcherScreens.allCases) { Text($0.title).tag($0) }
+                }
                 Text("Press the shortcut: the apps of the Dock show in a grid, with their badges: the ones with a badge first, above a line, then the others; in each, the ones you use most first. Move with the arrows or type the start of a name, then press Return. As with ⌘⇥, you can also keep the modifier down, press the key again to move to the next app, and let go to open it.")
                     .font(.caption).foregroundStyle(.secondary)
             }

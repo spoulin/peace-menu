@@ -90,6 +90,24 @@ enum ChangeSignal: String, Codable, CaseIterable, Identifiable {
 }
 
 /// How ☮ looks in the menu bar.
+/// Where the app switcher's grid shows.
+enum SwitcherScreens: String, Codable, CaseIterable, Identifiable {
+    /// The screen with the pointer.
+    case mouse
+    /// The screen with the menu bar in System Settings › Displays.
+    case main
+    /// Every screen at once; the keyboard works in all of them.
+    case all
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .mouse: return "The screen with the pointer"
+        case .main: return "The main screen"
+        case .all: return "All screens"
+        }
+    }
+}
+
 enum MenuIcon: String, Codable, CaseIterable, Identifiable {
     case classic, rainbow, stripes
     var id: String { rawValue }
@@ -188,6 +206,8 @@ struct Config: Codable {
     var badgeOnIcon = true
     /// Shows the Dock's apps in a grid to pick one from the keyboard. None by default.
     var switcherShortcut: Shortcut? = nil
+    /// The screens the grid shows on.
+    var switcherScreens: SwitcherScreens = .mouse
 
     init() {}
 
@@ -207,6 +227,7 @@ struct Config: Codable {
         let legacy = try decoder.container(keyedBy: LegacyKeys.self)
         switcherShortcut = try c.decodeIfPresent(Shortcut.self, forKey: .switcherShortcut)
             ?? legacy.decodeIfPresent(Shortcut.self, forKey: .ringShortcut)
+        switcherScreens = try c.decodeIfPresent(SwitcherScreens.self, forKey: .switcherScreens) ?? .mouse
     }
 
     private enum LegacyKeys: String, CodingKey { case ringShortcut }
